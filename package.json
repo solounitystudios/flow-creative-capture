@@ -5,7 +5,7 @@
   "description": "Provenance and evidence capture layer for creative work — a subsystem of the FLOW ecosystem.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
