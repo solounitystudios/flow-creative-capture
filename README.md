@@ -46,7 +46,8 @@ Creative Capture owns everything from **Studio Session** down. It produces struc
 - a durable Local Evidence Store: append-only, local persistence for devices, sessions, events, checkpoints, and signed batches, via `node:sqlite` (`src/store`)
 - Trust Evaluation: a side-effect-free composition over the store and device-signing primitives that derives a persisted batch's signature/structure/device-trust posture (`src/trust`)
 - Evidence Bundle Export V1: a deterministic, project-scoped, integrity-hashed export of stored evidence plus frozen trust-evaluation snapshots — evidence infrastructure only, never a rights or ownership determination (`src/evidence`)
-- sync *contracts only* — types, no transport, no endpoints (`src/sync`)
+- Document Architecture V1: Project Dossier (a thin human-readable summary derived from one Evidence Bundle) and Delivery Package (a recipient/purpose-specific, privacy-by-default selection of a Dossier) — neither is a rights/ownership determination, a contract, or a Passport credential (`src/documents`)
+- sync *contracts only* — types, no transport, no endpoints, including a first-pass Passport selective-disclosure contract (`src/sync`)
 - a CLI simulator that exercises the full domain via one golden scenario, "Cold Nights" (`src/simulator`)
 - a full test suite including the Cold Nights golden test (`tests`)
 
@@ -95,7 +96,8 @@ src/device      local device identity, Ed25519 keypairs, batch signing/verificat
 src/store       Local Evidence Store — durable, append-only persistence (node:sqlite)
 src/trust       Trust Evaluation — side-effect-free signature/structure/device-trust evaluation over the store
 src/evidence    Evidence Bundle Export — deterministic, integrity-hashed, project-scoped evidence export
-src/sync        type contracts for future evidence synchronization with flow-platform (no implementation yet)
+src/documents   Document Architecture — Project Dossier (summary) and Delivery Package (recipient-specific view)
+src/sync        type contracts for future evidence synchronization with flow-platform, incl. Passport disclosure (no implementation yet)
 src/simulator   the "Cold Nights" scenario generator + CLI runner
 tests           unit tests plus the Cold Nights golden test
 ```
