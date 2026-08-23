@@ -25,7 +25,7 @@ Local Evidence Store
       (interprets evidence, makes verification decisions, issues Passport credentials)
 ```
 
-This bootstrap implements the **Provenance Engine**, one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — the **Local Evidence Store** (`src/store`, added in `feature/local-evidence-store-v1`), **Trust Evaluation** (`src/trust`, added in `feature/signed-batch-trust-enforcement`), and type-only **Sync Client** contracts. The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
+This bootstrap implements the **Provenance Engine**, one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — the **Local Evidence Store** (`src/store`, added in `feature/local-evidence-store-v1`), **Trust Evaluation** (`src/trust`, added in `feature/signed-batch-trust-enforcement`), **Evidence Bundle Export** (`src/evidence`, this batch), and type-only **Sync Client** contracts. The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
 
 **Implementation status by piece**, since "future work" now covers pieces at different stages:
 
@@ -34,8 +34,9 @@ This bootstrap implements the **Provenance Engine**, one piece of **Studio Compa
 3. **Development-grade only — key storage.** `FileDeviceKeyStore` (`src/device/keyStore.ts`) persists private key material to a local file; it is explicitly not OS-keychain-grade and must not be treated as production secret storage (see `SECURITY.md` "Key storage").
 4. **Implemented — local evidence persistence.** `LocalEvidenceStore` (`src/store`) durably persists devices, sessions, provenance events, checkpoints, and signed batches to a local, append-only SQLite database (via Node's built-in `node:sqlite`). See "Local Evidence Store" below for the full design and `SECURITY.md` for exactly what durability does and does not add to the trust model.
 5. **Implemented — trust evaluation.** `src/trust` evaluates a persisted batch's signature, structural (checkpoint-chain and batch-chain), and current-device-trust dimensions, side-effect-free, into a derived `claimStatus`. See "Trust Evaluation" below for the ceiling state's exact, deliberately narrow meaning.
-6. **Future — synchronization.** `src/sync/contracts.ts` types only; no transport exists.
-7. **Future — FLOW Platform verification.** Entirely external to this repository; never invented here.
+6. **Implemented — Evidence Bundle Export V1.** `src/evidence` assembles a deterministic, project-scoped, integrity-hashed export of stored evidence plus frozen trust-evaluation snapshots. See "Evidence Bundle Export" below for its determinism, fail-closed, and private-key-boundary guarantees.
+7. **Future — synchronization.** `src/sync/contracts.ts` types only; no transport exists.
+8. **Future — FLOW Platform verification.** Entirely external to this repository; never invented here.
 
 ## Responsibilities by layer
 
@@ -96,6 +97,23 @@ A single `claimStatus` (`unsigned | signature_invalid | signer_unknown | structu
 
 **The ceiling state is `locally_sound_unverified_claim`.** It means only: the persisted batch exists, its signature verifies against an on-file public key, both its checkpoint chain and its device's batch chain are structurally sound, and its signing device is not currently revoked — all according to what *this local store* currently believes. It does **not** mean the underlying creative claim is factually true, that any human identity or authorship is verified, that a contribution or final use is verified, that copyright or legal ownership is verified, or that FLOW Platform (or anyone else) has verified anything. See `PROVENANCE_SPEC.md` §3 and `SECURITY.md`.
 
+### Evidence Bundle Export (`src/evidence`)
+Sits between Trust Evaluation and any future Sync Client / document system. `assembleEvidenceBundle(store, options)` is a **pure, read-only** assembly over `LocalEvidenceStore` + `evaluateStoredBatchTrust` — zero store writes, zero network calls, and it reimplements no hashing, canonicalization, signature, or chain logic of its own. Given a `projectId` and a caller-supplied `exportedAt` (never the wall clock — see PROVENANCE_SPEC.md §12), it produces a JSON-safe `EvidenceBundleExport`: the project's sessions, events, checkpoints, and signed batches, the public metadata of every device that touched them, and a frozen `TrustEvaluationSnapshot` per batch, all under one SHA-256 `integrityManifest.canonicalHash` computed the same way every hash in this codebase is (`hashCanonicalValue`).
+
+**What an Evidence Bundle is:** a deterministic, project-scoped, integrity-protected export of stored provenance/evidence plus frozen trust-evaluation results, as they exist in the local store at export time.
+
+**What an Evidence Bundle is explicitly NOT:** a copyright registration, an ownership or authorship determination, legal clearance, a contract, a rights transfer, a finished professional dossier, or a Passport credential in itself. `TrustEvaluationSnapshot`'s ceiling state (`locally_sound_unverified_claim`) carries exactly the same narrow meaning here as it does in Trust Evaluation — see that section above and PROVENANCE_SPEC.md §3. An Evidence Bundle is **evidence infrastructure**; it is expected to later serve as the underlying source material that derived, audience-specific views — a human-readable Project Dossier, a recipient-specific Delivery Package — are built from. Neither of those derived document types exists yet; this batch does not build them.
+
+**Determinism.** Two calls against the same unchanged store state with the same `exportedAt` are byte-for-byte identical, including `integrityManifest.canonicalHash` — no hidden wall-clock reads, no unstable iteration order (sessions/events/batches are explicitly sorted by their own timestamp then id before hashing), no random ids.
+
+**Non-curating, in the sense trust status already established.** A bundle never excludes evidence to make itself "look clean": an unsigned batch, a batch with an unknown signer, a structurally broken chain, or a revoked device's batch are all exported in full, with their true `TrustEvaluationSnapshot` attached. This module never invents a second trust system — it only ever reads what `evaluateStoredBatchTrust` already computed.
+
+**Fail-closed on internal inconsistency, which is a different thing from untrustworthy evidence.** If in-scope evidence references a device this store cannot resolve to a public key, or if in-scope sessions disagree on `workReference`, assembly throws `EvidenceBundleAssemblyError` rather than silently omitting the affected entry or guessing which value is right. Untrustworthy evidence is still packaged (that is Trust Evaluation's job to flag, not this module's job to hide); internally inconsistent *export* state is refused outright, because a bundle produced from it could misrepresent what evidence actually exists.
+
+**Private-key safe by construction.** The only device material this module ever reads is `LocalEvidenceStore.getDevicePublicKey` — never `FileDeviceKeyStore` or any private key. `tests/evidence/privateKeyBoundary.test.ts` proves no private key byte or its base64 form appears anywhere in an assembled bundle's serialized JSON, the same technique `tests/store/privateKeyBoundary.test.ts` already uses for the store itself.
+
+**Documentation envelope, deliberately narrow.** `options.documentationProfile` (`'traditional' | 'ai_native' | 'hybrid'`) is a caller-declared label describing what kind of documentation this export is *for*, carried through as `EvidenceBundleDocumentationEnvelope { profile, registryVersion: 'music-v1' }` — nothing more. Requesting `'ai_native'` or `'hybrid'` never implies AI-generation provenance was actually captured: this evidence model has no generation-event shape and no prompt/model/tool metadata yet (`ProjectAsset.sourceType`'s `ai_generated`/`ai_assisted` values are the only AI-related vocabulary that exists today, and `ProjectAsset` itself is not even persisted by the Local Evidence Store — see above). The document subsystem this envelope is a placeholder for does not exist yet and is not built in this batch.
+
 ### Sync Client (future, contracts only)
 `src/sync/contracts.ts` defines `EvidenceBundle`, `SyncAcknowledgement`, and the `EvidenceSyncClient` interface — the *shape* of what will eventually be exchanged with `flow-platform`. It contains zero transport code and zero endpoint URLs, because those do not exist yet and must not be invented here.
 
@@ -110,8 +128,8 @@ Owns accounts, organizations, Passport, Work Passport, Project Passport, Catalog
 | Provenance Engine → Local Evidence Store | Validated, hashed, chained records | Anything that bypasses checkpoint/manifest hashing |
 | Local Evidence Store (internal) | Public device verification material (`publicKeySpkiDer`) | Private key material — never enters `src/store`; stays under `FileDeviceKeyStore` |
 | Local Evidence Store → Trust Evaluation | Persisted batches/checkpoints/devices, read-only | Any write back to the store — `src/trust` never mutates `batch_validation_state` or anything else |
-| Trust Evaluation → Sync Client | A `claimStatus` of `locally_sound_unverified_claim` (the ceiling state) | Any claim that this state means factual truth, verified authorship/contribution/final-use, or legal ownership — see `src/trust/batchTrust.ts` |
-| Local Evidence Store → Sync Client | Batches, signable today via `src/device` and durably persisted today via `src/store` (the Sync Client transport itself is still future) | Live/unbounded raw project files |
+| Trust Evaluation → Evidence Bundle Export | A frozen `TrustEvaluationSnapshot` per batch (`claimStatus` of `locally_sound_unverified_claim` included, as-is) | Any claim that a snapshot means factual truth, verified authorship/contribution/final-use, or legal ownership — see `src/trust/batchTrust.ts` and `src/evidence/bundle.ts` |
+| Local Evidence Store / Evidence Bundle Export → Sync Client | An `EvidenceBundleExport` — sessions/events/checkpoints/batches, public device metadata, and trust snapshots, integrity-hashed (the Sync Client transport itself is still future) | Live/unbounded raw project files; private key material (never read by `src/evidence`, only public keys) |
 | Sync Client → FLOW Platform | Evidence bundles | Any claim that Creative Capture itself grants a Passport credential or verifies rights |
 
 A device or plugin producing events is **never** treated as fully trusted on its own — the eventual FLOW Platform server is the authoritative validator. This repository builds the evidence; it does not adjudicate it. See `SECURITY.md`.

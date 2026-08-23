@@ -70,3 +70,17 @@ describe('package public surface — trust evaluation', () => {
     expect('deviceBatchChainUpTo' in pkg).toBe(false);
   });
 });
+
+describe('package public surface — evidence bundle export', () => {
+  it('exports assembleEvidenceBundle and EvidenceBundleAssemblyError', () => {
+    expect(typeof pkg.assembleEvidenceBundle).toBe('function');
+    expect(typeof pkg.EvidenceBundleAssemblyError).toBe('function');
+  });
+
+  it('does not expose internal assembly helpers — comparators, device-id collection, or per-field derivation', () => {
+    expect('compareByFieldThenId' in pkg).toBe(false);
+    expect('collectDeviceIds' in pkg).toBe(false);
+    expect('resolveEvidenceBundleDevice' in pkg).toBe(false);
+    expect('deriveProjectWorkReference' in pkg).toBe(false);
+  });
+});

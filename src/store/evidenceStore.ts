@@ -177,6 +177,25 @@ export class LocalEvidenceStore {
     return rowToSession(row, end);
   }
 
+  /**
+   * All of a project's sessions, ordered by startedAt then id. Added for
+   * Evidence Bundle Export V1 (`src/evidence`), which needs to enumerate a
+   * project's sessions to scope events/batches to it — no other consumer
+   * needed this query before now. Uses the existing `idx_sessions_project`
+   * index; not a store redesign, one narrow read method.
+   */
+  listSessionsForProject(projectId: ProjectId): StudioSession[] {
+    const rows = this.db
+      .prepare('SELECT * FROM sessions WHERE projectId = ? ORDER BY startedAt ASC, rowid ASC')
+      .all(projectId) as unknown as SessionRow[];
+    return rows.map((row) => {
+      const end = this.db.prepare('SELECT * FROM session_ends WHERE sessionId = ?').get(row.id) as
+        | SessionEndRow
+        | undefined;
+      return rowToSession(row, end);
+    });
+  }
+
   // ---- Events -------------------------------------------------------------
 
   insertEvent(event: ProvenanceEvent, storedAt: string): InsertResult {
