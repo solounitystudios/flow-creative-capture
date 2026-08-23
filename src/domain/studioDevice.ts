@@ -51,3 +51,18 @@ export function createStudioDevice(input: StudioDeviceInput): StudioDevice {
 export function isDeviceActive(device: StudioDevice): boolean {
   return device.revokedAt === undefined;
 }
+
+/**
+ * Marks a device revoked. Returns a NEW record — callers append it to the
+ * device's history rather than mutating any previously stored record.
+ * Revocation is a local, forward-looking trust decision: it affects
+ * whether NEW signatures from this device should be trusted going
+ * forward. It never invalidates evidence the device signed while it was
+ * still active — see src/device/trust.ts.
+ */
+export function revokeStudioDevice(device: StudioDevice, revokedAt: string): StudioDevice {
+  if (device.revokedAt !== undefined) {
+    throw new Error(`StudioDevice ${device.id} is already revoked`);
+  }
+  return Object.freeze({ ...device, revokedAt });
+}
