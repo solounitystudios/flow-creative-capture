@@ -25,7 +25,28 @@ describe('package public surface — device signing', () => {
     expect('deriveDeviceKeyFingerprint' in pkg).toBe(false);
   });
 
-  it('does not expose the unwired local evidence store schema', () => {
+  it('does not expose the raw local evidence store schema DDL', () => {
     expect('SCHEMA_V1' in pkg).toBe(false);
+    expect('SCHEMA_V1_DDL' in pkg).toBe(false);
+  });
+});
+
+describe('package public surface — local evidence store', () => {
+  it('exports LocalEvidenceStore and its error/version types', () => {
+    expect(typeof pkg.LocalEvidenceStore).toBe('function');
+    expect(typeof pkg.StoreConflictError).toBe('function');
+    expect(typeof pkg.UnsupportedSchemaVersionError).toBe('function');
+    expect(typeof pkg.CURRENT_SCHEMA_VERSION).toBe('number');
+  });
+
+  it('does not expose raw store internals — node:sqlite, row mappers, or low-level database primitives', () => {
+    expect('openEvidenceDatabase' in pkg).toBe(false);
+    expect('closeEvidenceDatabase' in pkg).toBe(false);
+    expect('withTransaction' in pkg).toBe(false);
+    expect('isUniqueConstraintError' in pkg).toBe(false);
+    expect('deviceToRow' in pkg).toBe(false);
+    expect('rowToDevice' in pkg).toBe(false);
+    expect('eventToRow' in pkg).toBe(false);
+    expect('rowToEvent' in pkg).toBe(false);
   });
 });

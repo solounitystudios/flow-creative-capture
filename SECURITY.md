@@ -17,6 +17,12 @@ FLOW Creative Capture is **evidence infrastructure**. It may eventually be used 
   - **Post-signing tamper detection for every cryptographically bound field**: changing `id`, `profileId`, `deviceId`, `sessionId`, `eventCount`, `firstEventAt`, `lastEventAt`, `previousBatchHash`, `manifestHash`, or `createdAt` on a signed batch makes `verifySignedBatch` fail. This is exercised by a mutation test covering every bound field individually (`tests/device/batchSigning.test.ts`), plus a meta-test asserting the mutation table cannot silently fall behind the payload's actual field list.
   - `evaluateBatchTrust` (`src/device/trust.ts`) and `revokeStudioDevice` (`src/domain/studioDevice.ts`): a device can be marked revoked locally. Revocation is a **forward-looking, local-only** policy decision — it changes whether *this local evidence store* currently treats the device as trusted; it never retroactively invalidates a signature the device produced while still active. Signature cryptographic validity and "is this device currently trusted" are tracked as two independent fields (`DeviceTrustEvaluation.signature` vs. `.deviceCurrentlyTrusted`), deliberately not collapsed into one boolean.
   - Verification distinguishes an **unsigned** batch (`reason: 'missing_signature'`) from a **signed-but-invalid** one (`reason: 'malformed_signature'` or `'signature_mismatch'`) from a **signed-and-valid** one (`{ valid: true }`) — nothing interprets the absence of a signature as implicit trust.
+- **Local Evidence Store** (`src/store`), added in the `feature/local-evidence-store-v1` batch: durable, local, append-oriented persistence for devices, sessions, provenance events, checkpoints, and signed batches, via `node:sqlite`.
+  - `UPDATE`/`DELETE` are rejected at the SQLite trigger level (not just application convention) for every immutable fact table (`devices`, `device_revocations`, `sessions`, `session_ends`, `events`, `checkpoints`, `batches`) — this is **tamper-evident and mutation-resistant under normal application/database access**, exercised directly in `tests/store/evidenceStore.test.ts` by attempting real `UPDATE`/`DELETE` statements against a reopened database file.
+  - A signed `ProvenanceBatch`, once persisted, reconstructs and re-verifies with `verifySignedBatch` identically to how it verified before persistence — even after the store process closes and reopens (`tests/store/signatureRoundTrip.test.ts`). Reconstruction always goes through the existing domain factories and the existing `verifySignedBatch`/`validateCheckpointChain` — this store never reimplements canonicalization, hashing, or signature verification itself.
+  - Re-inserting byte-identical content for an id that already exists is a safe no-op; re-inserting *different* content for an existing id throws (`StoreConflictError`) rather than silently overwriting the original — proven directly for events, checkpoints, batches, and device revocations.
+  - A device's PRIVATE key is never persisted here — only its PUBLIC key (`publicKeySpkiDer`), stored so a batch's signature can be independently re-verified after a reopen without the live signing identity. `tests/store/privateKeyBoundary.test.ts` scans the raw on-disk database file for the actual private key bytes (both raw and base64 form) and asserts their absence, with a positive control proving the search technique itself works.
+  - Multi-record writes (`insertEvidenceBundle`) are atomic: a failure partway through leaves no partial evidence group durably persisted (proven by forcing a conflict mid-transaction and asserting a full rollback).
 
 ### Signed fields
 
@@ -40,9 +46,13 @@ It deliberately excludes:
 - **Key rotation.** A device has exactly one keypair, generated once; there is no path to move it to a new key while preserving continuity of trust.
 - **Any FLOW Platform verification or network synchronization.** No network call exists anywhere in this repository; `src/sync/contracts.ts` remains types only.
 - No server-side ingestion, authentication, or authorization — `src/sync/contracts.ts` is types only.
-- No persistence layer, so no at-rest access control to threat-model yet (`src/store/schema.ts` is a proposed, unwired schema — see `ARCHITECTURE.md`).
 - No DAW plugin code, so no plugin-sandboxing story yet.
 - No signing at the individual event or checkpoint level — only `ProvenanceBatch` can be signed today.
+- **Protection from a compromised local machine, for the evidence database too** — same limitation as key storage: `LocalEvidenceStore`'s append-only triggers stop *ordinary application-level* `UPDATE`/`DELETE` through the database, not an attacker with filesystem/root access who can open the `.db` file directly with another SQLite tool, edit its bytes, or replace it outright. See "Local Evidence Store" below.
+- **Protection against disk replacement or a restored backup being silently substituted.** Nothing in this store detects or rejects a whole-file swap — it only enforces structure *within* whatever file it's given.
+- **Cloud backup authenticity.** No backup mechanism exists in this bootstrap; if one is added later, this document does not yet cover it.
+- **Remote attestation.** Nothing here proves to a remote party what code or environment produced a given piece of evidence — only that a specific key signed a specific payload.
+- **At-rest encryption.** The local evidence database is a plain SQLite file; nothing in this batch encrypts it.
 
 Do not describe this bootstrap as "attested," "device-verified identity," or "server-verified" evidence in any downstream documentation. "Signed" is now accurate for batches specifically — always paired with what that does and does not prove (see "Signed fields" above and the threat model below). **Signature authenticity ≠ provenance truth ≠ contribution verification ≠ legal ownership — these are four separate claims and none of them implies another.**
 
@@ -60,7 +70,7 @@ Do not describe this bootstrap as "attested," "device-verified identity," or "se
 | Modified project files / hash substitution | An asset's actual bytes differ from its claimed `sha256` | `isSha256Hex` only checks structural validity of the hash string, not that it matches real file bytes — computing and comparing the real hash is the caller's responsibility (a future Studio Companion / bridge concern). |
 | Manipulated offline bundles | A batch is edited after capture, before upload | **Mitigated for signed batches.** `verifySignedBatch` detects a change to any of the ten fields in `BatchSigningPayload` (see "Signed fields" above) — an edited-then-resigned batch is only valid if the same private key produced the new signature. `validateBatchChain` separately still catches broken batch-to-batch linkage. Signing is not mandatory — nothing in this codebase yet rejects an unsigned or unverified batch outright; that policy decision is deferred (see "Signature stripping" below). |
 | Signature stripping | An attacker removes or blanks a batch's signature to make it look unsigned rather than tampered | **Evaluated, not solved.** `verifySignedBatch` correctly reports `missing_signature` rather than silently treating a stripped/absent signature as valid — it never fails open. But nothing today *requires* a batch to carry a signature before being treated as usable evidence elsewhere in this codebase; that enforcement point does not exist yet (there is no ingestion/acceptance path at all in this bootstrap). Building that gate is future work, not a bug in what's here. |
-| Compromised local evidence database | An attacker with local disk access rewrites history | No persistence layer exists yet to compromise. `src/store/schema.ts` proposes an append-only schema (triggers reject UPDATE/DELETE) but is not wired to any database engine yet — see `ARCHITECTURE.md`. When built, it must preserve the append-oriented invariant (`PROVENANCE_SPEC.md` §10). |
+| Compromised local evidence database | An attacker with local disk access rewrites history | **Partially mitigated, with an explicit limit.** `LocalEvidenceStore`'s SQLite triggers reject `UPDATE`/`DELETE` on every immutable fact table — tested directly by reopening a database file and attempting real mutation statements against it. This stops *ordinary application-level* tampering (a bug, a careless script, a compromised dependency issuing normal SQL through this store's connection). **It does not protect against an attacker with root/Administrator access, or anyone who can open the raw `.db` file with a different SQLite tool, edit its bytes directly, or replace the file wholesale** — the triggers are enforced by SQLite itself, and a sufficiently privileged attacker can bypass SQLite entirely. Do not describe this as "tamper-proof"; "tamper-evident" and "mutation-resistant under normal application/database access" are the accurate terms. |
 | Unauthorized contributor attribution | Someone attributes a contribution to a profile that isn't theirs | `ContributorReference` is a claim, not a verified credential — see `PROVENANCE_SPEC.md` §3. Verification is FLOW Platform's job, not this repo's. |
 | Malicious project handoff | A handoff is fabricated to falsely establish a chain of custody | `ProjectHandoff` requires a real `checkpointId` + `manifestHash`; it cannot be accepted twice (`acceptProjectHandoff` throws on a non-`pending` handoff) and cannot have `acceptedAt` precede `sentAt`. It does not yet verify that the sender actually possessed the referenced checkpoint. |
 | Sync endpoint abuse | Bulk/abusive submission once a real sync endpoint exists | Out of scope for this bootstrap — no endpoint exists. Must be addressed when `EvidenceSyncClient` gets a real implementation. |
@@ -77,7 +87,7 @@ Do not describe this bootstrap as "attested," "device-verified identity," or "se
 2. **The future server is authoritative.** Client-side validation in this repository exists to keep honest clients honest and to catch accidental corruption early; it is not a substitute for server-side re-validation once a server exists.
 3. **Identify devices cryptographically, without unnecessary hardware tracking.** `StudioDevice` deliberately has no serial-number or MAC-address field — identity is meant to be a device-generated keypair (`deviceKeyFingerprint`), not something that doubles as a hardware tracking vector.
 4. **Signed batches, today; signed bundles, eventually.** `signProvenanceBatch`/`verifySignedBatch` (`src/device`) implement Ed25519 signing and verification over `ProvenanceBatch`. `EvidenceBundle` (`src/sync/contracts.ts`) still just reserves the shape for a signed bundle exchange with FLOW Platform — no transport or server-side verification exists yet, and must not be assumed to.
-5. **Append-oriented evidence, always.** See `PROVENANCE_SPEC.md` §10. This is a security property, not just a style preference: an append-only history is what makes tamper *detection* (rather than silent tamper) possible at all.
+5. **Append-oriented evidence, always.** See `PROVENANCE_SPEC.md` §10. This is a security property, not just a style preference: an append-only history is what makes tamper *detection* (rather than silent tamper) possible at all. Originally enforced only by `Object.freeze` on in-memory domain objects; `LocalEvidenceStore` (`src/store`) now also enforces it at the storage-engine level via SQLite triggers, for whatever survives a process restart.
 6. **Immutable accepted hashes.** Once a `checkpointHash`, `manifestHash`, or asset `sha256` is accepted into the record, it is never recomputed or replaced in place — a changed input produces a new record, not a mutated old one.
 7. **Idempotent ingestion, in the future.** Not implemented yet (see "Replayed events" / "Duplicate event submission" above) — flagged here so it is not forgotten when the real ingestion path is built.
 8. **Raw creative files are private by default.** Only fingerprints and structural metadata belong in the evidence graph modeled here; full audio/MIDI/project bytes are not something this domain model transmits or stores.
@@ -97,6 +107,31 @@ What it explicitly does **not** protect against:
 - the key file being copied elsewhere by any means.
 
 A real Studio Companion build must replace this with actual OS-level secure storage (macOS Keychain, Windows Credential Manager/DPAPI, a Linux Secret Service/libsecret backend) before any user's trust relies on key secrecy. Do not describe `FileDeviceKeyStore` as "secure storage" anywhere outside its own file's documentation.
+
+`LocalEvidenceStore` (`src/store`) never stores private key material — only a device's public key (`publicKeySpkiDer`), for independent signature re-verification. This boundary is enforced by construction (nothing in `src/store` accepts or handles a private key) and is regression-tested directly (`tests/store/privateKeyBoundary.test.ts` scans the raw on-disk evidence database file for the actual private key bytes and asserts their absence).
+
+## Local Evidence Store
+
+`LocalEvidenceStore` (`src/store`) is local, durable, append-oriented persistence via `node:sqlite`. Precise claims:
+
+**What it adds:**
+- Crash/process survival — evidence written before a crash is still there after restart, unlike the prior in-memory-only model.
+- Durable evidence retention across close/reopen, verified for signed batches specifically (the round-trip invariant — see above).
+- Mutation resistance for ordinary application/database access, via SQLite triggers rejecting `UPDATE`/`DELETE` on every immutable fact table.
+- Reproducible signature and checkpoint-chain verification after storage — reconstructed evidence hands off to the same `verifySignedBatch`/`validateCheckpointChain` used everywhere else, never a reimplementation.
+
+**What it does NOT add** (see also the threat model rows above and `ARCHITECTURE.md`'s "Local Evidence Store" section):
+- No protection against a compromised OS or root/Administrator access to the machine.
+- No protection against the database file being replaced wholesale, or a disk image/backup being restored and substituted.
+- No protection against private-key theft — that risk is entirely orthogonal to persistence and lives under "Key storage" above.
+- No authoritative revocation — `device_revocations` records this store's own local belief, same as before persistence existed.
+- No replay protection against a future server — persisting a signed batch does not make it any less resubmittable.
+- No legal rights/ownership determination — persistence changes nothing about `PROVENANCE_SPEC.md` §3's provenance/rights separation.
+- No cloud backup mechanism, and therefore no backup authenticity story, in this bootstrap.
+- No remote attestation of what code or environment produced the evidence.
+- No at-rest encryption of the database file.
+
+Prefer **"tamper-evident"**, **"append-only under normal application/database access"**, and **"cryptographically verifiable signed evidence"** when describing this store. Avoid **"tamper-proof"** — it is not accurate against a privileged local attacker, and this document exists specifically so that distinction is never lost downstream.
 
 ## Reporting
 

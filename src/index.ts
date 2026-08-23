@@ -9,10 +9,7 @@ export * from './sync/contracts.js';
  * (src/device/keypair.ts — generateDeviceKeyPair, signBytes, verifyBytes,
  * DER export/import) are intentionally NOT part of the package surface.
  * Consumers should go through `DeviceIdentity` (create/loadDeviceIdentity)
- * rather than handling raw keys directly. `src/store/schema.ts` (proposed,
- * unwired local evidence persistence) is also deliberately excluded — it
- * is not part of this feature and is not consumed by anything exported
- * here.
+ * rather than handling raw keys directly.
  */
 export type {
   CreateDeviceIdentityOptions,
@@ -26,3 +23,17 @@ export type { DeviceTrustEvaluation } from './device/trust.js';
 export { evaluateBatchTrust } from './device/trust.js';
 export type { DeviceKeyStore, StoredKeyMaterial } from './device/keyStore.js';
 export { FileDeviceKeyStore } from './device/keyStore.js';
+
+/**
+ * Local Evidence Store V1 (durable, append-oriented persistence for
+ * devices, sessions, events, checkpoints, and signed batches — see
+ * src/store/schema.ts). Curated: the underlying `node:sqlite` handle,
+ * raw SQL, and row-mapping internals (src/store/rows.ts,
+ * src/store/database.ts's lower-level open/transaction primitives) are
+ * NOT part of the package surface — `LocalEvidenceStore` is the only
+ * intended entry point for consumers.
+ */
+export { LocalEvidenceStore, type InsertResult } from './store/evidenceStore.js';
+export { StoreConflictError } from './store/errors.js';
+export { UnsupportedSchemaVersionError } from './store/database.js';
+export { CURRENT_SCHEMA_VERSION } from './store/schema.js';

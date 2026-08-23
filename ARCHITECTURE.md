@@ -22,14 +22,14 @@ Local Evidence Store
       (interprets evidence, makes verification decisions, issues Passport credentials)
 ```
 
-This bootstrap implements the **Provenance Engine**, plus one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — and type-only **Sync Client** contracts. The **Local Evidence Store** has a proposed schema (`src/store/schema.ts`) but no wired persistence yet. The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
+This bootstrap implements the **Provenance Engine**, one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — the **Local Evidence Store** (`src/store`, added in `feature/local-evidence-store-v1`), and type-only **Sync Client** contracts. The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
 
 **Implementation status by piece**, since "future work" now covers pieces at different stages:
 
 1. **Implemented — canonical provenance engine.** `src/crypto`, `src/domain`, `src/provenance`: canonical serialization, SHA-256 hashing, checkpoint/batch construction and chain validation, asset lineage. Fully tested, including the Cold Nights golden scenario.
 2. **Implemented — local device-signing primitive.** `src/device`: Ed25519 device keypairs, public-key-derived fingerprints, `DeviceIdentity`, `ProvenanceBatch` signing/verification, local revocation/trust evaluation. See `SECURITY.md` for exactly what this does and does not prove.
 3. **Development-grade only — key storage.** `FileDeviceKeyStore` (`src/device/keyStore.ts`) persists private key material to a local file; it is explicitly not OS-keychain-grade and must not be treated as production secret storage (see `SECURITY.md` "Key storage").
-4. **Proposed, unwired — local evidence persistence.** `src/store/schema.ts` defines an append-only SQL schema (UPDATE/DELETE forbidden via triggers) for the eventual Local Evidence Store. No database engine is wired to it, and no code reads or writes through it yet — it is a schema definition only, not a persistence layer.
+4. **Implemented — local evidence persistence.** `LocalEvidenceStore` (`src/store`) durably persists devices, sessions, provenance events, checkpoints, and signed batches to a local, append-only SQLite database (via Node's built-in `node:sqlite`). See "Local Evidence Store" below for the full design and `SECURITY.md` for exactly what durability does and does not add to the trust model.
 5. **Future — synchronization.** `src/sync/contracts.ts` types only; no transport exists.
 6. **Future — FLOW Platform verification.** Entirely external to this repository; never invented here.
 
@@ -54,8 +54,29 @@ The trust-sensitive core, and the only place that:
 
 It depends only on `src/domain` (data shapes) and `src/crypto` (hashing). It has no knowledge of any specific DAW, and no network access.
 
-### Local Evidence Store (proposed schema, unwired)
-Durable, append-oriented storage for devices, sessions, events, checkpoints, batches, assets, and relationships. This bootstrap still models these as in-memory domain objects at runtime (see the simulator). `src/store/schema.ts` proposes a SQL schema for this layer — fact tables keyed on domain id, lifecycle tables tracking state transitions as new rows, and `UPDATE`/`DELETE` forbidden at the trigger level so the append-oriented invariant is enforced by the storage engine itself, not just convention. **No database engine is wired to this schema and no code reads or writes through it** — it exists purely as a reviewable schema definition ahead of the real persistence layer, which remains future work per `AGENTS.md`'s "smallest coherent" principle. Whatever the real implementation becomes, it must preserve the append-oriented invariant described in `PROVENANCE_SPEC.md`.
+### Local Evidence Store (`src/store`)
+Durable, append-oriented storage for devices, sessions, provenance events, checkpoints, and signed provenance batches. V1 deliberately does **not** persist assets, asset relationships, handoffs, or release candidates — those aren't required to reconstruct or re-verify captured evidence and remain a candidate for a future store version, not something built ahead of an actual need.
+
+**Persistence engine: `node:sqlite` (Node's built-in, synchronous SQLite binding — `DatabaseSync`), not a native module like `better-sqlite3`.** This was a deliberate evaluation, not a default choice:
+- Zero native dependency: no `node-gyp`, no prebuilt-binary fetch step, nothing that can fail differently across this repo's Node version, CI, Codespaces, and a future desktop shell's bundled Node.
+- Fully typed: `@types/node` already ships `DatabaseSync`'s types; no `@types` gap to paper over.
+- Supports everything V1 needs: multi-statement DDL, triggers that reject `UPDATE`/`DELETE`, prepared statements, manual `BEGIN`/`COMMIT`/`ROLLBACK` transactions, `PRAGMA foreign_keys`, and WAL mode — all verified directly against this Node version before committing to the choice.
+- The real cost: `node:sqlite` is still an experimental Node API, and — because experimental builtins are deliberately excluded from `module.builtinModules` — this repo's build tooling (Vite, under `vitest run`) cannot statically resolve a plain `import { DatabaseSync } from 'node:sqlite'`. `src/store/database.ts` loads it via `createRequire` instead, which reaches Node's real module loader directly; every other file only ever imports the `DatabaseSync` *type* (erased at compile time, so it carries none of the resolution risk). This also required raising this repo's Node floor from `>=20` to `>=22.5.0` (`package.json` `engines`, and `.github/workflows/ci.yml`'s `node-version`).
+
+**Schema (see `src/store/schema.ts` for the full DDL and rationale in its module docstring):**
+- IMMUTABLE FACT tables — `devices`, `device_revocations`, `sessions`, `session_ends`, `events`, `checkpoints`, `batches` — each keyed by a `PRIMARY KEY` on the relevant domain id, written at most once per key, with `UPDATE`/`DELETE` forbidden via triggers. This is the append-only invariant (`PROVENANCE_SPEC.md` §10) enforced at the storage engine level, not just by application convention.
+- `device_revocations` and `session_ends` are split out from `devices`/`sessions` rather than modeled as columns on them, because revocation and session-ending are exactly-once terminal transitions in the domain layer itself (`revokeStudioDevice` and `endStudioSession` both throw if the transition already happened) — modeling each as its own immutable fact table (present = transitioned, absent = not yet) means the original row is never touched again.
+- `batches` intentionally has NO `validationStatus` column. That field is isolated in a separate, genuinely mutable `batch_validation_state` table (no anti-mutation triggers) — it's this evidence store's own local, downstream opinion about a batch, explicitly excluded from what the device's signature binds (see `src/device/batchSigning.ts`'s `BatchSigningPayload` docstring), so re-running local validation later never requires touching the immutable row that carries the actual signed fields.
+- `schema_version` is a single mutable row tracking schema compatibility — genuinely operational metadata, not evidence.
+- `devices.publicKeySpkiDer` stores a device's PUBLIC key (base64 SPKI DER) so a stored batch's signature can be independently re-verified after a reopen, without needing the live `DeviceIdentity` that originally signed it. The corresponding PRIVATE key is never persisted here — it remains solely under `FileDeviceKeyStore` (see "Private key boundary" in `SECURITY.md`).
+
+**Hard invariant:** a `ProvenanceBatch` reconstructed from storage passes to `verifySignedBatch` and returns the exact same result as it did before persistence — no reordering, no normalized-away values, no altered timestamps, no changed null/undefined semantics. Row reconstruction always goes back through the existing domain factories (`createStudioDevice`, `createProvenanceEvent`, `createProvenanceBatch`, ...), reusing their structural validation rather than duplicating it. Verification itself is never reimplemented in SQL — `LocalEvidenceStore.verifyCheckpointChainForProject`/`verifyBatchSignature*` are thin readback helpers that hand stored data to the same `validateCheckpointChain`/`verifySignedBatch` the rest of the codebase uses. **The store persists; the provenance engine validates — these stay separate.**
+
+**Duplicate/idempotency policy:** re-inserting byte-identical content for an id that already exists in a fact table is a safe no-op; re-inserting *different* content for an existing id throws `StoreConflictError` and never overwrites the original. This is one uniform policy applied to every fact table, not special-cased per entity.
+
+**Transactions:** `LocalEvidenceStore.insertEvidenceBundle` wraps a set of events plus an optional checkpoint and batch in one `BEGIN`/`COMMIT`/`ROLLBACK` transaction — either the whole logical write lands, or none of it does. WAL mode is enabled unconditionally (a no-op for the `:memory:` databases tests use) so local reads aren't blocked by an in-progress write.
+
+**Trust boundary:** this store persists evidence; it does not decide whether that evidence should be trusted. Storage success, checkpoint-chain structural validity, and signature cryptographic validity are three separate facts, and no insert method calls any verification automatically — a caller must explicitly ask for `verifyCheckpointChainForProject`/`verifyBatchSignature*`. See `SECURITY.md`.
 
 ### Sync Client (future, contracts only)
 `src/sync/contracts.ts` defines `EvidenceBundle`, `SyncAcknowledgement`, and the `EvidenceSyncClient` interface — the *shape* of what will eventually be exchanged with `flow-platform`. It contains zero transport code and zero endpoint URLs, because those do not exist yet and must not be invented here.
@@ -69,7 +90,8 @@ Owns accounts, organizations, Passport, Work Passport, Project Passport, Catalog
 |---|---|---|
 | DAW Bridge → Provenance Engine | Canonical `ProvenanceEvent`s only | Raw DAW-native data structures, unvalidated timestamps treated as authoritative |
 | Provenance Engine → Local Evidence Store | Validated, hashed, chained records | Anything that bypasses checkpoint/manifest hashing |
-| Local Evidence Store → Sync Client | Batches, signable today via `src/device` (the Sync Client transport itself is still future) | Live/unbounded raw project files |
+| Local Evidence Store (internal) | Public device verification material (`publicKeySpkiDer`) | Private key material — never enters `src/store`; stays under `FileDeviceKeyStore` |
+| Local Evidence Store → Sync Client | Batches, signable today via `src/device` and durably persisted today via `src/store` (the Sync Client transport itself is still future) | Live/unbounded raw project files |
 | Sync Client → FLOW Platform | Evidence bundles | Any claim that Creative Capture itself grants a Passport credential or verifies rights |
 
 A device or plugin producing events is **never** treated as fully trusted on its own — the eventual FLOW Platform server is the authoritative validator. This repository builds the evidence; it does not adjudicate it. See `SECURITY.md`.
@@ -79,6 +101,7 @@ A device or plugin producing events is **never** treated as fully trusted on its
 Every layer below Studio Companion is designed to function fully offline:
 - Studio Sessions, events, assets, and checkpoints are all constructible without connectivity.
 - `ProvenanceBatch` (`src/domain/provenanceBatch.ts`, `src/provenance/batch.ts`) exists specifically so a device can record locally, bundle, and upload later.
+- `LocalEvidenceStore` (`src/store`) persists all of this to a local file with zero network access of any kind — `node:sqlite` is a local, in-process database engine, not a client to anything.
 - `occurredAt` (when something actually happened) and `receivedAt` (when a server actually saw it) are distinct fields everywhere they matter — a delayed upload is never allowed to claim it happened live. `createProvenanceEvent` enforces `receivedAt >= occurredAt` at construction time.
 
 ## Synchronization (future)
