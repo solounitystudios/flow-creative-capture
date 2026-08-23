@@ -42,11 +42,15 @@ Creative Capture owns everything from **Studio Session** down. It produces struc
 - a strongly typed provenance domain model (`src/domain`)
 - deterministic canonical serialization + SHA-256 utilities (`src/crypto`)
 - a provenance engine: checkpoint creation/chain validation, asset lineage, offline batches, event validation (`src/provenance`)
+- local device identity and batch signing: Ed25519 device keypairs, `DeviceIdentity`, `ProvenanceBatch` signing/verification, local revocation (`src/device`)
+- a durable Local Evidence Store: append-only, local persistence for devices, sessions, events, checkpoints, and signed batches, via `node:sqlite` (`src/store`)
+- Trust Evaluation: a side-effect-free composition over the store and device-signing primitives that derives a persisted batch's signature/structure/device-trust posture (`src/trust`)
+- Evidence Bundle Export V1: a deterministic, project-scoped, integrity-hashed export of stored evidence plus frozen trust-evaluation snapshots — evidence infrastructure only, never a rights or ownership determination (`src/evidence`)
 - sync *contracts only* — types, no transport, no endpoints (`src/sync`)
 - a CLI simulator that exercises the full domain via one golden scenario, "Cold Nights" (`src/simulator`)
 - a full test suite including the Cold Nights golden test (`tests`)
 
-No DAW bridge, no native plugin code, no Electron/Tauri shell, no database, and no network client exist yet. That is deliberate — see `PROVENANCE_SPEC.md` and the "DO NOT BUILD YET" list understood by this repo's agents (`AGENTS.md`).
+No DAW bridge, no native plugin code, no Electron/Tauri shell, and no network client exist yet. That is deliberate — see `PROVENANCE_SPEC.md` and the "DO NOT BUILD YET" list understood by this repo's agents (`AGENTS.md`).
 
 ## Future DAW targets
 
@@ -87,6 +91,10 @@ npm run simulate  # run the Cold Nights scenario via CLI and print a summary
 src/domain      strongly typed provenance domain model (CreativeProject, StudioSession, ProvenanceEvent, ...)
 src/crypto      canonical serialization + SHA-256 hashing utilities
 src/provenance  checkpoint/manifest construction, chain validation, asset lineage, batches, event validation
+src/device      local device identity, Ed25519 keypairs, batch signing/verification, local revocation
+src/store       Local Evidence Store — durable, append-only persistence (node:sqlite)
+src/trust       Trust Evaluation — side-effect-free signature/structure/device-trust evaluation over the store
+src/evidence    Evidence Bundle Export — deterministic, integrity-hashed, project-scoped evidence export
 src/sync        type contracts for future evidence synchronization with flow-platform (no implementation yet)
 src/simulator   the "Cold Nights" scenario generator + CLI runner
 tests           unit tests plus the Cold Nights golden test

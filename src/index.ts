@@ -54,3 +54,23 @@ export type {
   StoredBatchStructureStatus,
 } from './trust/batchTrust.js';
 export { evaluateStoredBatchTrust } from './trust/batchTrust.js';
+
+/**
+ * Evidence Bundle Export (`src/evidence`) — a pure, read-only assembly
+ * over `LocalEvidenceStore` + Trust Evaluation into a portable,
+ * integrity-hashed snapshot. Curated: internal comparators, device-id
+ * collection, and the pre-hash payload construction are NOT exported —
+ * `assembleEvidenceBundle` is the only intended entry point.
+ */
+export type {
+  AssembleEvidenceBundleOptions,
+  DocumentationProfile,
+  EvidenceBundleDevice,
+  EvidenceBundleDocumentationEnvelope,
+  EvidenceBundleExport,
+  EvidenceBundleIntegrityManifest,
+  EvidenceBundleProject,
+  TrustEvaluationSnapshot,
+} from './evidence/bundle.js';
+export { assembleEvidenceBundle } from './evidence/bundle.js';
+export { EvidenceBundleAssemblyError } from './evidence/errors.js';
