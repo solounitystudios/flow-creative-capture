@@ -3,6 +3,7 @@ import {
   asAssetId,
   asAssetRelationshipId,
   asCheckpointId,
+  asContributionClaimId,
   asDeviceId,
   asEventId,
   asHandoffId,
@@ -93,9 +94,30 @@ export function runColdNightsScenario(seedTimestamp = '2026-01-05T18:00:00.000Z'
   });
 
   const contributors: ContributorReference[] = [
-    createContributorReference({ profileId: nightwireProfileId, role: 'producer', subrole: 'producer' }),
-    createContributorReference({ profileId: nightwireProfileId, role: 'songwriter', subrole: 'melody' }),
-    createContributorReference({ profileId: marcusProfileId, role: 'musician', subrole: 'lead_guitar' }),
+    createContributorReference({
+      id: asContributionClaimId('claim-nightwire-producer'),
+      projectId: project.id,
+      profileId: nightwireProfileId,
+      role: 'producer',
+      subrole: 'producer',
+      claimedAt: clock(),
+    }),
+    createContributorReference({
+      id: asContributionClaimId('claim-nightwire-songwriter'),
+      projectId: project.id,
+      profileId: nightwireProfileId,
+      role: 'songwriter',
+      subrole: 'melody',
+      claimedAt: clock(),
+    }),
+    createContributorReference({
+      id: asContributionClaimId('claim-marcus-musician'),
+      projectId: project.id,
+      profileId: marcusProfileId,
+      role: 'musician',
+      subrole: 'lead_guitar',
+      claimedAt: clock(),
+    }),
   ];
 
   const nightwireDevice = createStudioDevice({

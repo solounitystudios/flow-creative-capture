@@ -18,6 +18,7 @@ export type BatchId = Brand<string, 'BatchId'>;
 export type HandoffId = Brand<string, 'HandoffId'>;
 export type ReleaseCandidateId = Brand<string, 'ReleaseCandidateId'>;
 export type RightsClaimId = Brand<string, 'RightsClaimId'>;
+export type ContributionClaimId = Brand<string, 'ContributionClaimId'>;
 
 /** External identifiers owned by flow-platform. Opaque here by design. */
 export type ExternalProjectPassportId = Brand<string, 'ExternalProjectPassportId'>;
@@ -40,4 +41,5 @@ export const asBatchId = makeBrander<'BatchId'>();
 export const asHandoffId = makeBrander<'HandoffId'>();
 export const asReleaseCandidateId = makeBrander<'ReleaseCandidateId'>();
 export const asRightsClaimId = makeBrander<'RightsClaimId'>();
+export const asContributionClaimId = makeBrander<'ContributionClaimId'>();
 export const asExternalProjectPassportId = makeBrander<'ExternalProjectPassportId'>();
