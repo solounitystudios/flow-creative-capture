@@ -6,6 +6,7 @@ import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   asBatchId,
+  asContributionClaimId,
   asDeviceId,
   asEventId,
   asProfileId,
@@ -16,6 +17,7 @@ import {
 import { createStudioDevice } from '../../src/domain/studioDevice.js';
 import { createStudioSession } from '../../src/domain/studioSession.js';
 import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
+import { createContributorReference } from '../../src/domain/contributorReference.js';
 import { createDeviceIdentity } from '../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../src/device/keyStore.js';
 import { signProvenanceBatch } from '../../src/device/batchSigning.js';
@@ -504,6 +506,107 @@ describe('assembleEvidenceBundle — tamper/broken-evidence condition', () => {
     expect(snapshot?.signature.status).toBe('unsigned');
     expect(snapshot?.claimStatus).toBe('unsigned');
     expect(snapshot?.reasons).toContain('batch_unsigned');
+
+    store.close();
+  });
+});
+
+describe('assembleEvidenceBundle — contributor claims', () => {
+  it('exports [] for a project with zero persisted contributor claims', () => {
+    const store = new LocalEvidenceStore(makeDbPath('flow-evidence-claims-empty-'));
+    const projectId = asProjectId('project-no-claims');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+
+    expect(bundle.contributorClaims).toEqual([]);
+    store.close();
+  });
+
+  it('exports exactly one persisted claim, with every field preserved', () => {
+    const store = new LocalEvidenceStore(makeDbPath('flow-evidence-claims-one-'));
+    const projectId = asProjectId('project-claims-one');
+    const claim = createContributorReference({
+      id: asContributionClaimId('claim-solo-producer'),
+      projectId,
+      profileId: asProfileId('profile-solo'),
+      role: 'producer',
+      subrole: 'producer',
+      description: 'Tracked, mixed, and mastered solo',
+      claimedAt: '2026-01-01T00:00:00.000Z',
+    });
+    store.insertContributorReference(claim, '2026-01-01T00:05:00.000Z');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+
+    expect(bundle.contributorClaims).toEqual([claim]);
+    store.close();
+  });
+
+  it('exports multiple claims, preserves optional subrole/description when present and absent, in deterministic claimedAt order, without leaking another project\'s claims', () => {
+    const store = new LocalEvidenceStore(makeDbPath('flow-evidence-claims-multi-'));
+    const projectId = asProjectId('project-claims-multi');
+    const otherProjectId = asProjectId('project-claims-other');
+
+    const songwriterClaim = createContributorReference({
+      id: asContributionClaimId('claim-songwriter'),
+      projectId,
+      profileId: asProfileId('profile-a'),
+      role: 'songwriter',
+      subrole: 'lyrics',
+      claimedAt: '2026-01-05T18:05:00.000Z',
+    });
+    const producerClaim = createContributorReference({
+      id: asContributionClaimId('claim-producer'),
+      projectId,
+      profileId: asProfileId('profile-a'),
+      role: 'producer',
+      subrole: 'producer',
+      description: 'Produced the full session',
+      claimedAt: '2026-01-05T18:10:00.000Z',
+    });
+    const bareClaim = createContributorReference({
+      id: asContributionClaimId('claim-bare'),
+      projectId,
+      profileId: asProfileId('profile-b'),
+      role: 'composer',
+      claimedAt: '2026-01-06T09:00:00.000Z',
+    });
+    const otherProjectClaim = createContributorReference({
+      id: asContributionClaimId('claim-other-project'),
+      projectId: otherProjectId,
+      profileId: asProfileId('profile-a'),
+      role: 'producer',
+      claimedAt: '2026-01-05T18:00:00.000Z',
+    });
+
+    // Inserted deliberately out of chronological order.
+    store.insertContributorReference(producerClaim, '2026-01-05T18:15:00.000Z');
+    store.insertContributorReference(otherProjectClaim, '2026-01-05T18:16:00.000Z');
+    store.insertContributorReference(bareClaim, '2026-01-06T09:05:00.000Z');
+    store.insertContributorReference(songwriterClaim, '2026-01-05T18:17:00.000Z');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+
+    expect(bundle.contributorClaims).toEqual([songwriterClaim, producerClaim, bareClaim]);
+    expect(bundle.contributorClaims.some((c) => c.id === otherProjectClaim.id)).toBe(false);
+    expect(bundle.contributorClaims.find((c) => c.id === bareClaim.id)?.subrole).toBeUndefined();
+    expect(bundle.contributorClaims.find((c) => c.id === bareClaim.id)?.description).toBeUndefined();
+
+    store.close();
+  });
+
+  it('never infers a contributor claim from active session/event participants', () => {
+    const { store, scenario } = seedColdNightsStore(makeDbPath('flow-evidence-claims-no-inference-'));
+
+    const bundle = assembleEvidenceBundle(store, { projectId: scenario.project.id, exportedAt: EXPORTED_AT });
+
+    // Cold Nights has real recorded activity from both NightWire and
+    // Marcus in this store, but this test never called
+    // insertContributorReference — so the claims list must stay empty
+    // regardless of how much activity is present.
+    expect(bundle.sessions.length).toBeGreaterThan(0);
+    expect(bundle.events.length).toBeGreaterThan(0);
+    expect(bundle.contributorClaims).toEqual([]);
 
     store.close();
   });

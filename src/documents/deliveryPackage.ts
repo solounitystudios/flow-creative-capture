@@ -4,6 +4,7 @@ import type { DocumentationProfile, EvidenceBundleExport, EvidenceBundleProject 
 import { DocumentAssemblyError } from './errors.js';
 import type {
   DossierActivity,
+  DossierContributionClaim,
   DossierDisclaimers,
   DossierParticipant,
   DossierTrustSummary,
@@ -20,6 +21,13 @@ import type {
  * Neither the dossier nor the bundle is read back out of a Delivery
  * Package once assembled — building one is a one-way, read-only
  * projection, never a place evidence gets edited or reinterpreted.
+ *
+ * `contributorClaims` is its own selectable section, never folded into
+ * `participants` — a recipient who requests activity-derived
+ * `participants` without also requesting `contributorClaims` gets no
+ * contribution-claim data at all, and the reverse holds too. Both remain
+ * exactly what `ProjectDossier` already labeled them: self-reported
+ * claims, not verified credit, ownership, or rights.
  *
  * PRIVACY BY DEFAULT: sections summarize, they do not carry raw evidence.
  * `evidenceReferences` exposes only `{kind, id, at}` per record — never a
@@ -69,6 +77,7 @@ export type DeliveryPackagePurpose = (typeof DELIVERY_PACKAGE_PURPOSES)[number];
 export const DELIVERY_PACKAGE_SECTION_KEYS = [
   'project',
   'participants',
+  'contributorClaims',
   'activity',
   'trustSummary',
   'documentationProfile',
@@ -93,6 +102,7 @@ export interface EvidenceRecordReference {
 export interface DeliveryPackageSections {
   readonly project?: EvidenceBundleProject;
   readonly participants?: readonly DossierParticipant[];
+  readonly contributorClaims?: readonly DossierContributionClaim[];
   readonly activity?: DossierActivity;
   readonly trustSummary?: DossierTrustSummary;
   readonly documentationProfile?: DocumentationProfile;
@@ -196,6 +206,9 @@ export function buildDeliveryPackage(
   }
   if (requested.has('participants')) {
     sections.participants = dossier.participants;
+  }
+  if (requested.has('contributorClaims')) {
+    sections.contributorClaims = dossier.contributorClaims;
   }
   if (requested.has('activity')) {
     sections.activity = dossier.activity;

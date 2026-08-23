@@ -2,11 +2,15 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { asBatchId } from '../../src/domain/ids.js';
+import { asBatchId, asContributionClaimId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
 import { createDeviceIdentity } from '../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../src/device/keyStore.js';
 import { signProvenanceBatch } from '../../src/device/batchSigning.js';
 import { createBatchFromEvents } from '../../src/provenance/batch.js';
+import { createStudioDevice } from '../../src/domain/studioDevice.js';
+import { createStudioSession } from '../../src/domain/studioSession.js';
+import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
+import { createContributorReference } from '../../src/domain/contributorReference.js';
 import { LocalEvidenceStore } from '../../src/store/evidenceStore.js';
 import { runColdNightsScenario } from '../../src/simulator/coldNights.js';
 import { assembleEvidenceBundle, type EvidenceBundleExport } from '../../src/evidence/bundle.js';
@@ -187,6 +191,101 @@ describe('buildProjectDossier — documentation profile is a label, not captured
     // The profile label never causes AI-provenance-specific fields to appear —
     // the dossier's shape is identical either way except for this one field.
     expect(Object.keys(dossierWith).sort()).toEqual([...Object.keys(dossierWithout), 'documentationProfile'].sort());
+  });
+});
+
+describe('buildProjectDossier — activity participants vs. contribution claims stay separate', () => {
+  it('lists activity-derived participants and self-reported contribution claims as distinct sections, neither one manufacturing the other', () => {
+    const projectId = asProjectId('project-dossier-separation');
+    const activeProfileId = asProfileId('profile-active-no-claim');
+    const claimOnlyProfileId = asProfileId('profile-claim-no-activity');
+    const deviceId = asDeviceId('device-dossier-separation-01');
+    const sessionId = asSessionId('session-dossier-separation-01');
+
+    const store = new LocalEvidenceStore(join(makeTempDir('flow-dossier-separation-db-'), 'evidence.db'));
+    const keyStore = new FileDeviceKeyStore(makeTempDir('flow-dossier-separation-keystore-'));
+    const identity = createDeviceIdentity(keyStore, {
+      profileId: activeProfileId,
+      platform: 'macos',
+      appVersion: '1.0.0',
+      deviceId,
+    }).identity;
+
+    store.insertDevice(
+      createStudioDevice({
+        id: deviceId,
+        profileId: activeProfileId,
+        devicePublicId: 'pub-dossier-separation',
+        platform: 'macos',
+        appVersion: '1.0.0',
+        deviceKeyFingerprint: identity.fingerprint,
+      }),
+      identity.publicKeySpkiDer,
+      '2026-01-01T00:00:00.000Z',
+    );
+    const session = createStudioSession({
+      id: sessionId,
+      projectId,
+      actorProfileId: activeProfileId,
+      deviceId,
+      daw: 'fl_studio',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+    store.insertSession(session, '2026-01-01T00:00:00.000Z');
+    store.insertEvent(
+      createProvenanceEvent({
+        eventId: asEventId('event-dossier-separation-01'),
+        projectId,
+        sessionId,
+        actorProfileId: activeProfileId,
+        deviceId,
+        source: 'fl_studio',
+        eventType: 'session_started',
+        occurredAt: '2026-01-01T00:00:00.000Z',
+      }),
+      '2026-01-01T00:00:00.000Z',
+    );
+
+    // A claim from a profile with ZERO recorded activity in this project.
+    const claim = createContributorReference({
+      id: asContributionClaimId('claim-dossier-separation-01'),
+      projectId,
+      profileId: claimOnlyProfileId,
+      role: 'composer',
+      claimedAt: '2026-01-02T00:00:00.000Z',
+    });
+    store.insertContributorReference(claim, '2026-01-02T00:05:00.000Z');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+    store.close();
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+
+    // The activity-only profile appears in participants, never in contributorClaims.
+    expect(dossier.participants.map((p) => p.profileId)).toEqual([activeProfileId]);
+    expect(dossier.contributorClaims.some((c) => c.profileId === activeProfileId)).toBe(false);
+
+    // The claim-only profile appears in contributorClaims, never in participants —
+    // a claim is never required to have matching recorded activity.
+    expect(dossier.contributorClaims).toEqual([
+      {
+        id: claim.id,
+        profileId: claimOnlyProfileId,
+        role: 'composer',
+        claimedAt: claim.claimedAt,
+      },
+    ]);
+    expect(dossier.participants.some((p) => p.profileId === claimOnlyProfileId)).toBe(false);
+  });
+});
+
+describe('buildProjectDossier — disclaimer accuracy after contributor claims', () => {
+  it('still accurately covers contribution claims: the unverified notice explicitly says "contribution" claims are unverified', () => {
+    const bundle = buildColdNightsBundle(join(makeTempDir('flow-dossier-disclaimer-accuracy-'), 'evidence.db'));
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+
+    expect(dossier.disclaimers.unverified.some((notice) => /contribution/i.test(notice))).toBe(true);
+    // Never claims claims are verified/credited/owned.
+    expect(JSON.stringify(dossier.disclaimers)).not.toMatch(/verified contributor|official credit|rights holder/i);
   });
 });
 

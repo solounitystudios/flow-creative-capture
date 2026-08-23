@@ -1,4 +1,5 @@
-import type { ProfileId } from '../domain/ids.js';
+import type { ContributionClaimId, ProfileId } from '../domain/ids.js';
+import type { ContributionRole } from '../domain/roles.js';
 import type { ClaimStatus } from '../trust/batchTrust.js';
 import type {
   DocumentationProfile,
@@ -25,6 +26,13 @@ import type {
  * determination, and it is NOT a FLOW Platform verification or Passport
  * credential — see `disclaimers` below, ARCHITECTURE.md's "Project
  * Dossier" section, and PROVENANCE_SPEC.md §3.
+ *
+ * `participants` (activity-derived: who recorded sessions/events) and
+ * `contributorClaims` (explicit, self-reported: who claims which role)
+ * are DELIBERATELY SEPARATE sections built from two different bundle
+ * arrays — see `DossierContributionClaim` below. Neither is derived from
+ * the other: recording activity never manufactures a claim, and a claim
+ * never requires matching activity to appear.
  */
 
 /**
@@ -56,6 +64,25 @@ export interface DossierParticipant {
   readonly eventCount: number;
   readonly firstActivityAt?: string;
   readonly lastActivityAt?: string;
+}
+
+/**
+ * One EXPLICIT, self-reported contribution claim, presented for human
+ * reading. This is a claim's own record — never something derived from
+ * `DossierParticipant`/activity data, and never conflated with one: a
+ * profile can appear in `participants` (it recorded sessions/events) with
+ * zero entries here, or appear here (it claimed a role) with zero
+ * recorded activity — either combination is valid and neither implies
+ * the other. `projectId` is omitted since it is always this dossier's
+ * own `project.projectId`, not a per-claim fact worth repeating.
+ */
+export interface DossierContributionClaim {
+  readonly id: ContributionClaimId;
+  readonly profileId: ProfileId;
+  readonly role: ContributionRole;
+  readonly subrole?: string;
+  readonly description?: string;
+  readonly claimedAt: string;
 }
 
 export interface DossierActivity {
@@ -94,6 +121,7 @@ export interface ProjectDossier {
   readonly project: EvidenceBundleProject;
   readonly documentationProfile?: DocumentationProfile;
   readonly participants: readonly DossierParticipant[];
+  readonly contributorClaims: readonly DossierContributionClaim[];
   readonly activity: DossierActivity;
   readonly trust: DossierTrustSummary;
   readonly disclaimers: DossierDisclaimers;
@@ -147,6 +175,27 @@ function buildParticipants(bundle: EvidenceBundleExport): DossierParticipant[] {
       };
     })
     .sort((a, b) => compareProfileIds(a.profileId, b.profileId));
+}
+
+/**
+ * Presents `bundle.contributorClaims` for human reading, re-sorted here
+ * (claimedAt, then id as a deterministic tiebreaker) rather than trusting
+ * the bundle's own ordering — the same defensive-determinism pattern
+ * `buildParticipants`/`buildActivity` already use. Never reads
+ * `bundle.sessions`/`bundle.events` — activity data cannot manufacture or
+ * alter a claim.
+ */
+function buildContributionClaims(bundle: EvidenceBundleExport): DossierContributionClaim[] {
+  return [...bundle.contributorClaims]
+    .map((claim) => ({
+      id: claim.id,
+      profileId: claim.profileId,
+      role: claim.role,
+      ...(claim.subrole !== undefined ? { subrole: claim.subrole } : {}),
+      ...(claim.description !== undefined ? { description: claim.description } : {}),
+      claimedAt: claim.claimedAt,
+    }))
+    .sort((a, b) => (a.claimedAt !== b.claimedAt ? (a.claimedAt < b.claimedAt ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 function buildActivity(bundle: EvidenceBundleExport): DossierActivity {
@@ -207,6 +256,7 @@ export function buildProjectDossier(bundle: EvidenceBundleExport, options: Build
     project: bundle.project,
     ...(bundle.documentation?.profile !== undefined ? { documentationProfile: bundle.documentation.profile } : {}),
     participants: buildParticipants(bundle),
+    contributorClaims: buildContributionClaims(bundle),
     activity: buildActivity(bundle),
     trust: buildTrustSummary(bundle),
     disclaimers: {
