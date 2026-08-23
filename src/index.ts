@@ -37,3 +37,20 @@ export { LocalEvidenceStore, type InsertResult } from './store/evidenceStore.js'
 export { StoreConflictError } from './store/errors.js';
 export { UnsupportedSchemaVersionError } from './store/database.js';
 export { CURRENT_SCHEMA_VERSION } from './store/schema.js';
+
+/**
+ * Trust Evaluation (`src/trust`) — a side-effect-free composition over
+ * `LocalEvidenceStore` and the existing signature/chain primitives above.
+ * Curated: internal derivation helpers (how `claimStatus` is rolled up,
+ * how the device batch chain is scoped) are NOT exported —
+ * `evaluateStoredBatchTrust` is the only intended entry point.
+ */
+export type {
+  BatchTrustEvaluation,
+  BatchTrustReason,
+  ClaimStatus,
+  DeviceTrustStatus,
+  StoredBatchSignatureStatus,
+  StoredBatchStructureStatus,
+} from './trust/batchTrust.js';
+export { evaluateStoredBatchTrust } from './trust/batchTrust.js';

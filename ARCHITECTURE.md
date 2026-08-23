@@ -15,6 +15,9 @@ Provenance Engine
 Local Evidence Store
       │  (append-oriented: events, checkpoints, batches, assets, relationships)
       ▼
+ Trust Evaluation
+      │  (side-effect-free: signature, structure, device-trust dimensions -> claimStatus)
+      ▼
    Sync Client
       │  (bundles + signs evidence, uploads when connectivity returns)
       ▼
@@ -22,7 +25,7 @@ Local Evidence Store
       (interprets evidence, makes verification decisions, issues Passport credentials)
 ```
 
-This bootstrap implements the **Provenance Engine**, one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — the **Local Evidence Store** (`src/store`, added in `feature/local-evidence-store-v1`), and type-only **Sync Client** contracts. The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
+This bootstrap implements the **Provenance Engine**, one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — the **Local Evidence Store** (`src/store`, added in `feature/local-evidence-store-v1`), **Trust Evaluation** (`src/trust`, added in `feature/signed-batch-trust-enforcement`), and type-only **Sync Client** contracts. The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
 
 **Implementation status by piece**, since "future work" now covers pieces at different stages:
 
@@ -30,8 +33,9 @@ This bootstrap implements the **Provenance Engine**, one piece of **Studio Compa
 2. **Implemented — local device-signing primitive.** `src/device`: Ed25519 device keypairs, public-key-derived fingerprints, `DeviceIdentity`, `ProvenanceBatch` signing/verification, local revocation/trust evaluation. See `SECURITY.md` for exactly what this does and does not prove.
 3. **Development-grade only — key storage.** `FileDeviceKeyStore` (`src/device/keyStore.ts`) persists private key material to a local file; it is explicitly not OS-keychain-grade and must not be treated as production secret storage (see `SECURITY.md` "Key storage").
 4. **Implemented — local evidence persistence.** `LocalEvidenceStore` (`src/store`) durably persists devices, sessions, provenance events, checkpoints, and signed batches to a local, append-only SQLite database (via Node's built-in `node:sqlite`). See "Local Evidence Store" below for the full design and `SECURITY.md` for exactly what durability does and does not add to the trust model.
-5. **Future — synchronization.** `src/sync/contracts.ts` types only; no transport exists.
-6. **Future — FLOW Platform verification.** Entirely external to this repository; never invented here.
+5. **Implemented — trust evaluation.** `src/trust` evaluates a persisted batch's signature, structural (checkpoint-chain and batch-chain), and current-device-trust dimensions, side-effect-free, into a derived `claimStatus`. See "Trust Evaluation" below for the ceiling state's exact, deliberately narrow meaning.
+6. **Future — synchronization.** `src/sync/contracts.ts` types only; no transport exists.
+7. **Future — FLOW Platform verification.** Entirely external to this repository; never invented here.
 
 ## Responsibilities by layer
 
@@ -78,6 +82,20 @@ Durable, append-oriented storage for devices, sessions, provenance events, check
 
 **Trust boundary:** this store persists evidence; it does not decide whether that evidence should be trusted. Storage success, checkpoint-chain structural validity, and signature cryptographic validity are three separate facts, and no insert method calls any verification automatically — a caller must explicitly ask for `verifyCheckpointChainForProject`/`verifyBatchSignature*`. See `SECURITY.md`.
 
+### Trust Evaluation (`src/trust`)
+Sits between the Local Evidence Store and any future Sync Client / Evidence Bundle Export. It is a **side-effect-free composition** over existing primitives — `verifySignedBatch`, `validateBatchChain`, `LocalEvidenceStore.verifyCheckpointChainForProject`, `isDeviceActive` — and never reimplements hashing, canonicalization, or chain/signature validation itself.
+
+**Independent dimensions are authoritative; the rollup is derived convenience only.** `evaluateStoredBatchTrust(store, batchId)` returns a `BatchTrustEvaluation` with three dimensions computed unconditionally and independently every call:
+- `signature: StoredBatchSignatureStatus` — four distinct states (`unsigned`, `valid`, `invalid`, `signer_unknown`), never a bare boolean and never `undefined` standing in for "couldn't check." `signer_unknown` (no public key on file for the claimed device) is diagnostically different from `invalid` (verification ran and failed) and from `unsigned` (no signature present at all) — all three are kept distinguishable.
+- `structure: StoredBatchStructureStatus` — covers BOTH the batch's project's checkpoint-hash chain (via `verifyCheckpointChainForProject`) and this device's own batch-to-batch `previousBatchHash` chain (via `validateBatchChain`), scoped to exactly this device's batches up to and including the target batch — never the whole database, never batches created after the target. A break in either chain is preserved in full, not summarized into one opaque boolean.
+- `deviceTrust: DeviceTrustStatus` — `deviceFound` and `currentlyTrusted` kept separate (an unknown device and a known-but-revoked device are different findings), plus `revokedAt` when applicable.
+
+A single `claimStatus` (`unsigned | signature_invalid | signer_unknown | structure_invalid | device_untrusted | locally_sound_unverified_claim`) is derived by fixed priority — signer-unknown, then unsigned, then signature-invalid, then structure-invalid, then device-untrusted, then the ceiling state — for convenience display only; it never replaces the raw dimensions and is never itself persisted. `reasons: readonly BatchTrustReason[]` preserves every simultaneously-failing dimension (e.g. a batch can be both `structure_invalid` *and* carry `device_revoked` in its reasons at once) — the rollup naming one label never erases the others.
+
+**Computed, never persisted.** Every dimension and the rollup are recomputed from current store state on every call. Nothing here writes to `batch_validation_state` (the store's own, separate downstream bookkeeping) or caches a `trusted` flag anywhere — there is no stale trust decision to go stale, by construction. Revoking a device after a batch was validly signed flips `deviceTrust.currentlyTrusted` and `claimStatus` on the *next* evaluation; it never rewrites `signature`, matching the non-retroactivity invariant `src/device/trust.ts` already established.
+
+**The ceiling state is `locally_sound_unverified_claim`.** It means only: the persisted batch exists, its signature verifies against an on-file public key, both its checkpoint chain and its device's batch chain are structurally sound, and its signing device is not currently revoked — all according to what *this local store* currently believes. It does **not** mean the underlying creative claim is factually true, that any human identity or authorship is verified, that a contribution or final use is verified, that copyright or legal ownership is verified, or that FLOW Platform (or anyone else) has verified anything. See `PROVENANCE_SPEC.md` §3 and `SECURITY.md`.
+
 ### Sync Client (future, contracts only)
 `src/sync/contracts.ts` defines `EvidenceBundle`, `SyncAcknowledgement`, and the `EvidenceSyncClient` interface — the *shape* of what will eventually be exchanged with `flow-platform`. It contains zero transport code and zero endpoint URLs, because those do not exist yet and must not be invented here.
 
@@ -91,6 +109,8 @@ Owns accounts, organizations, Passport, Work Passport, Project Passport, Catalog
 | DAW Bridge → Provenance Engine | Canonical `ProvenanceEvent`s only | Raw DAW-native data structures, unvalidated timestamps treated as authoritative |
 | Provenance Engine → Local Evidence Store | Validated, hashed, chained records | Anything that bypasses checkpoint/manifest hashing |
 | Local Evidence Store (internal) | Public device verification material (`publicKeySpkiDer`) | Private key material — never enters `src/store`; stays under `FileDeviceKeyStore` |
+| Local Evidence Store → Trust Evaluation | Persisted batches/checkpoints/devices, read-only | Any write back to the store — `src/trust` never mutates `batch_validation_state` or anything else |
+| Trust Evaluation → Sync Client | A `claimStatus` of `locally_sound_unverified_claim` (the ceiling state) | Any claim that this state means factual truth, verified authorship/contribution/final-use, or legal ownership — see `src/trust/batchTrust.ts` |
 | Local Evidence Store → Sync Client | Batches, signable today via `src/device` and durably persisted today via `src/store` (the Sync Client transport itself is still future) | Live/unbounded raw project files |
 | Sync Client → FLOW Platform | Evidence bundles | Any claim that Creative Capture itself grants a Passport credential or verifies rights |
 
