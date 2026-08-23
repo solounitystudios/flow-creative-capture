@@ -50,3 +50,23 @@ describe('package public surface — local evidence store', () => {
     expect('rowToEvent' in pkg).toBe(false);
   });
 });
+
+describe('package public surface — trust evaluation', () => {
+  it('exports evaluateStoredBatchTrust', () => {
+    expect(typeof pkg.evaluateStoredBatchTrust).toBe('function');
+  });
+
+  it('still exports the original, unmodified evaluateBatchTrust alongside the new store-aware evaluation', () => {
+    expect(typeof pkg.evaluateBatchTrust).toBe('function');
+    expect(pkg.evaluateBatchTrust).not.toBe(pkg.evaluateStoredBatchTrust);
+  });
+
+  it('does not expose internal trust-derivation helpers', () => {
+    expect('deriveClaimStatus' in pkg).toBe(false);
+    expect('collectReasons' in pkg).toBe(false);
+    expect('computeSignatureStatus' in pkg).toBe(false);
+    expect('computeStructureStatus' in pkg).toBe(false);
+    expect('computeDeviceTrust' in pkg).toBe(false);
+    expect('deviceBatchChainUpTo' in pkg).toBe(false);
+  });
+});
