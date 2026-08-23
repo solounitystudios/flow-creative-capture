@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import type { DatabaseSync } from 'node:sqlite';
-import { CURRENT_SCHEMA_VERSION, SCHEMA_V1_DDL } from './schema.js';
+import { CURRENT_SCHEMA_VERSION, SCHEMA_V2_DDL } from './schema.js';
 
 /**
  * node:sqlite (`DatabaseSync`) is Node's built-in, synchronous SQLite
@@ -63,7 +63,7 @@ function readSchemaVersion(db: DatabaseSync): number {
 }
 
 function initializeFreshDatabase(db: DatabaseSync): void {
-  db.exec(SCHEMA_V1_DDL);
+  db.exec(SCHEMA_V2_DDL);
   db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(CURRENT_SCHEMA_VERSION);
 }
 

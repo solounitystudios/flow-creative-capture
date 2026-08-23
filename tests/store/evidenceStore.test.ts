@@ -6,6 +6,7 @@ import {
   asAssetId,
   asBatchId,
   asCheckpointId,
+  asContributionClaimId,
   asDeviceId,
   asEventId,
   asProfileId,
@@ -17,6 +18,7 @@ import { createStudioSession } from '../../src/domain/studioSession.js';
 import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
 import { createProvenanceCheckpoint } from '../../src/domain/provenanceCheckpoint.js';
 import { createProvenanceBatch } from '../../src/domain/provenanceBatch.js';
+import { createContributorReference } from '../../src/domain/contributorReference.js';
 import { createCheckpointFromManifest } from '../../src/provenance/checkpoint.js';
 import { closeEvidenceDatabase, openEvidenceDatabase } from '../../src/store/database.js';
 import { LocalEvidenceStore } from '../../src/store/evidenceStore.js';
@@ -87,6 +89,22 @@ function makeCheckpoint(id = 'checkpoint-1', sequence = 0, projectId = 'project-
     checkpointHash: 'b'.repeat(64),
     triggerType: 'manual',
     createdAt: '2026-01-01T00:02:00.000Z',
+  });
+}
+
+function makeContributorClaim(
+  id = 'claim-1',
+  projectId = 'project-1',
+  overrides: Partial<Parameters<typeof createContributorReference>[0]> = {},
+) {
+  return createContributorReference({
+    id: asContributionClaimId(id),
+    projectId: asProjectId(projectId),
+    profileId: asProfileId('profile-1'),
+    role: 'producer',
+    subrole: 'producer',
+    claimedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
   });
 }
 
@@ -387,6 +405,110 @@ describe('LocalEvidenceStore — batches', () => {
   });
 });
 
+describe('LocalEvidenceStore — contributor references', () => {
+  it('round-trips a contributor reference, including optional subrole and description', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    const claim = makeContributorClaim('claim-nightwire-producer', 'project-cold-nights', {
+      role: 'producer',
+      subrole: 'producer',
+      description: 'Tracked and produced the full session',
+      claimedAt: '2026-01-05T18:10:00.000Z',
+    });
+    store.insertContributorReference(claim, '2026-01-05T18:15:00.000Z');
+
+    const loaded = store.getContributorReference(claim.id);
+    expect(loaded).toEqual(claim);
+    store.close();
+  });
+
+  it('returns undefined for a contributor reference that was never inserted', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    expect(store.getContributorReference(asContributionClaimId('nope'))).toBeUndefined();
+    store.close();
+  });
+
+  it('persists a claim with no subrole/description and reconstructs it without those fields (never as null on the domain object)', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    const claim = createContributorReference({
+      id: asContributionClaimId('claim-bare'),
+      projectId: asProjectId('project-1'),
+      profileId: asProfileId('profile-1'),
+      role: 'composer',
+      claimedAt: '2026-01-01T00:00:00.000Z',
+    });
+    store.insertContributorReference(claim, '2026-01-01T00:05:00.000Z');
+
+    const loaded = store.getContributorReference(claim.id);
+    expect(loaded).toEqual(claim);
+    expect(loaded?.subrole).toBeUndefined();
+    expect(loaded?.description).toBeUndefined();
+    expect('subrole' in (loaded ?? {})).toBe(false);
+    expect('description' in (loaded ?? {})).toBe(false);
+    store.close();
+  });
+
+  it('lists a project\'s contributor claims ordered by claimedAt (rowid as tiebreaker), never another project\'s claims', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+
+    // Cold Nights-style realistic claims, inserted deliberately out of
+    // chronological order, across two different projects.
+    const producerClaim = makeContributorClaim('claim-nightwire-producer', 'project-cold-nights', {
+      profileId: asProfileId('profile-nightwire'),
+      role: 'producer',
+      subrole: 'producer',
+      claimedAt: '2026-01-05T18:10:00.000Z',
+    });
+    const songwriterClaim = makeContributorClaim('claim-nightwire-songwriter', 'project-cold-nights', {
+      profileId: asProfileId('profile-nightwire'),
+      role: 'songwriter',
+      subrole: 'melody',
+      claimedAt: '2026-01-05T18:05:00.000Z',
+    });
+    const musicianClaim = makeContributorClaim('claim-marcus-musician', 'project-cold-nights', {
+      profileId: asProfileId('profile-marcus'),
+      role: 'musician',
+      subrole: 'lead_guitar',
+      claimedAt: '2026-01-06T09:00:00.000Z',
+    });
+    const otherProjectClaim = makeContributorClaim('claim-other-project', 'project-other-song', {
+      profileId: asProfileId('profile-nightwire'),
+      role: 'producer',
+      subrole: 'producer',
+      claimedAt: '2026-01-05T18:00:00.000Z',
+    });
+
+    // Inserted out of chronological order on purpose, and interleaved
+    // with a different project's claim.
+    store.insertContributorReference(producerClaim, '2026-01-05T18:15:00.000Z');
+    store.insertContributorReference(otherProjectClaim, '2026-01-05T18:16:00.000Z');
+    store.insertContributorReference(musicianClaim, '2026-01-06T09:05:00.000Z');
+    store.insertContributorReference(songwriterClaim, '2026-01-05T18:17:00.000Z');
+
+    const coldNightsClaims = store.listContributorReferencesForProject(asProjectId('project-cold-nights'));
+    expect(coldNightsClaims.map((c) => c.id)).toEqual([
+      'claim-nightwire-songwriter',
+      'claim-nightwire-producer',
+      'claim-marcus-musician',
+    ]);
+    expect(coldNightsClaims).toEqual([songwriterClaim, producerClaim, musicianClaim]);
+
+    const otherProjectClaims = store.listContributorReferencesForProject(asProjectId('project-other-song'));
+    expect(otherProjectClaims.map((c) => c.id)).toEqual(['claim-other-project']);
+
+    // Never leaks across projects in either direction.
+    expect(coldNightsClaims.some((c) => c.id === otherProjectClaim.id)).toBe(false);
+    expect(otherProjectClaims.some((c) => c.projectId === producerClaim.projectId)).toBe(false);
+
+    store.close();
+  });
+
+  it('returns an empty list for a project with no contributor claims', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    expect(store.listContributorReferencesForProject(asProjectId('no-claims-here'))).toEqual([]);
+    store.close();
+  });
+});
+
 describe('LocalEvidenceStore — append-only enforcement (direct SQL against the persisted file)', () => {
   function reopenRaw(path: string) {
     return openEvidenceDatabase(path);
@@ -451,6 +573,18 @@ describe('LocalEvidenceStore — append-only enforcement (direct SQL against the
       /append-only/,
     );
     expect(() => raw.exec('DELETE FROM device_revocations')).toThrow(/append-only/);
+    closeEvidenceDatabase(raw);
+  });
+
+  it('blocks UPDATE and DELETE on contributor_references — a historical claim cannot be mutated or withdrawn by rewriting the row', () => {
+    const path = makeDbPath();
+    const store = new LocalEvidenceStore(path);
+    store.insertContributorReference(makeContributorClaim(), '2026-01-01T00:05:00.000Z');
+    store.close();
+
+    const raw = reopenRaw(path);
+    expect(() => raw.exec("UPDATE contributor_references SET role = 'musician'")).toThrow(/append-only/);
+    expect(() => raw.exec('DELETE FROM contributor_references')).toThrow(/append-only/);
     closeEvidenceDatabase(raw);
   });
 

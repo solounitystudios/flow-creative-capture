@@ -1,11 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { BatchId, CheckpointId, DeviceId, EventId, ProjectId, SessionId } from '../domain/ids.js';
+import type { BatchId, CheckpointId, ContributionClaimId, DeviceId, EventId, ProjectId, SessionId } from '../domain/ids.js';
 import type { BatchValidationStatus } from '../domain/enums.js';
 import type { StudioDevice } from '../domain/studioDevice.js';
 import type { StudioSession } from '../domain/studioSession.js';
 import type { ProvenanceEvent } from '../domain/provenanceEvent.js';
 import type { ProvenanceCheckpoint } from '../domain/provenanceCheckpoint.js';
 import type { ProvenanceBatch } from '../domain/provenanceBatch.js';
+import type { ContributorReference } from '../domain/contributorReference.js';
 import { validateCheckpointChain, type CheckpointChainValidationResult } from '../provenance/checkpoint.js';
 import { verifySignedBatch, type BatchVerificationResult } from '../device/batchSigning.js';
 import { closeEvidenceDatabase, isUniqueConstraintError, openEvidenceDatabase, withTransaction } from './database.js';
@@ -14,10 +15,12 @@ import { StoreConflictError } from './errors.js';
 import {
   batchToRow,
   checkpointToRow,
+  contributorReferenceToRow,
   deviceToRow,
   eventToRow,
   rowToBatch,
   rowToCheckpoint,
+  rowToContributorReference,
   rowToDevice,
   rowToDevicePublicKeySpkiDer,
   rowToEvent,
@@ -26,6 +29,7 @@ import {
   type BatchRow,
   type BatchValidationStateRow,
   type CheckpointRow,
+  type ContributorReferenceRow,
   type DeviceRevocationRow,
   type DeviceRow,
   type EventRow,
@@ -55,12 +59,14 @@ function rowsEqual(a: Record<string, SqlPrimitive>, b: Record<string, SqlPrimiti
 }
 
 /**
- * Local Evidence Store V1.
+ * Local Evidence Store (schema version 2).
  *
  * Persists exactly what is needed to reconstruct and independently
  * re-verify locally captured evidence: devices, sessions, provenance
- * events, checkpoints, and signed provenance batches (see schema.ts for
- * the full table rationale). This class is a thin, intentional API over
+ * events, checkpoints, and signed provenance batches — plus, since schema
+ * version 2, explicit contribution claims (`contributor_references`; see
+ * schema.ts for the full table rationale and the version-bump/backward-
+ * compatibility note). This class is a thin, intentional API over
  * `node:sqlite` — it does not expose raw SQL, a query builder, or the
  * underlying `DatabaseSync` handle to callers.
  *
@@ -357,6 +363,43 @@ export class LocalEvidenceStore {
     }
     const publicKey = this.getDevicePublicKey(batch.deviceId);
     return publicKey === undefined ? undefined : verifySignedBatch(batch, publicKey);
+  }
+
+  // ---- Contributor Claims ---------------------------------------------------
+
+  /**
+   * Persists an EXPLICIT contribution claim. This store never derives one
+   * from session/event/device activity, and never calls this method on a
+   * caller's behalf — a claim exists only because something explicitly
+   * constructed a `ContributorReference` and explicitly asked for it to be
+   * persisted. See `src/domain/contributorReference.ts`.
+   *
+   * Deliberately NOT part of `insertEvidenceBundle`'s atomic grouping: a
+   * contribution claim is a separate kind of act from a session's captured
+   * evidence (events/checkpoint/batch), and keeping it out of that
+   * transaction group reinforces — structurally, not just by convention —
+   * that activity capture can never implicitly produce a claim.
+   */
+  insertContributorReference(claim: ContributorReference, storedAt: string): InsertResult {
+    return this.insertFactRow('contributor_references', 'id', contributorReferenceToRow(claim, storedAt) as unknown as Record<
+      string,
+      SqlPrimitive
+    >);
+  }
+
+  getContributorReference(id: ContributionClaimId): ContributorReference | undefined {
+    const row = this.db.prepare('SELECT * FROM contributor_references WHERE id = ?').get(id) as
+      | ContributorReferenceRow
+      | undefined;
+    return row === undefined ? undefined : rowToContributorReference(row);
+  }
+
+  /** Ordered by claimedAt, rowid as a deterministic tiebreaker — same rule as every other project-scoped list method. */
+  listContributorReferencesForProject(projectId: ProjectId): ContributorReference[] {
+    const rows = this.db
+      .prepare('SELECT * FROM contributor_references WHERE projectId = ? ORDER BY claimedAt ASC, rowid ASC')
+      .all(projectId) as unknown as ContributorReferenceRow[];
+    return rows.map(rowToContributorReference);
   }
 
   // ---- Atomic multi-record evidence assembly -------------------------------

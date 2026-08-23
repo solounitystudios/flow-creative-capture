@@ -1,30 +1,51 @@
 /**
- * Local Evidence Store — schema version 1.
+ * Local Evidence Store — schema version 2.
  *
- * This is a REVISION of the earlier untracked draft of this file, made
- * during the Local Evidence Store V1 batch. It is not the original draft
- * committed unchanged — the table set and the append-only/mutable split
- * below were re-derived from the actual domain code (see rationale below),
- * not carried over by default.
+ * V1 (the Local Evidence Store V1 batch) persisted exactly the objects
+ * needed to reconstruct and independently re-verify locally captured
+ * evidence: devices, sessions, provenance events, checkpoints, and signed
+ * provenance batches. It did NOT persist assets, asset relationships,
+ * handoffs, or release candidates — those were not required to satisfy
+ * that batch's hard invariant and adding them then would have been
+ * building ahead of an actual need. They remain a candidate for a future
+ * store version.
  *
- * V1 persists exactly the objects needed to reconstruct and independently
- * re-verify locally captured evidence: devices, sessions, provenance
- * events, checkpoints, and signed provenance batches. It does NOT persist
- * assets, asset relationships, handoffs, or release candidates — those
- * are not required to satisfy this batch's hard invariant (a persisted,
- * reopened batch verifies identically to how it verified before
- * persistence) and adding them now would be building ahead of an actual
- * need. They remain a candidate for a future store version.
+ * V2 (the Contributor Claims Persistence batch) adds exactly one new
+ * table, `contributor_references`: EXPLICIT, self-reported "profileId
+ * claims role on projectId" records — see
+ * `src/domain/contributorReference.ts`. This is a different kind of
+ * record from everything else in this schema: every other table captures
+ * something a device/session automatically recorded; `contributor_references`
+ * captures a deliberate declaration a caller must construct on purpose.
+ * Nothing in this store (or in `src/evidence`/`src/documents`) ever
+ * derives a contribution claim from session/event/device activity — see
+ * that module's docstring.
+ *
+ * **Backward compatibility.** This store has no migration engine (see
+ * `database.ts`'s `UnsupportedSchemaVersionError` — an existing database
+ * with a different schema version is always rejected outright, never
+ * silently migrated or reinterpreted). Bumping `CURRENT_SCHEMA_VERSION`
+ * from 1 to 2 for this table addition is therefore not optional: a V1
+ * database is missing `contributor_references` entirely, so opening it
+ * under V2 code without a version bump would let it look "compatible"
+ * (same version number) while actually being structurally different —
+ * exactly the silent-mismatch failure mode this store's version check
+ * exists to prevent. With the bump, a V1 database is safely rejected with
+ * `UnsupportedSchemaVersionError` and left completely untouched, exactly
+ * like any other unsupported version — see
+ * `tests/store/database.test.ts`'s "rejects a pre-Contributor-Claims
+ * (schema version 1) database safely" for the regression proof.
  *
  * ## Table shapes
  *
  * IMMUTABLE FACT tables (`devices`, `device_revocations`, `sessions`,
- * `session_ends`, `events`, `checkpoints`, `batches`) have a PRIMARY KEY on
- * the domain id (or, for the two "_ends"/"_revocations" side tables, on the
- * id of the fact they attach to) and are written at most once per key.
- * `UPDATE`/`DELETE` are forbidden on all of them via triggers — this is the
- * append-only invariant enforced at the storage engine level, per
- * PROVENANCE_SPEC.md §10, not just by application convention.
+ * `session_ends`, `events`, `checkpoints`, `batches`, `contributor_references`)
+ * have a PRIMARY KEY on the domain id (or, for the two "_ends"/"_revocations"
+ * side tables, on the id of the fact they attach to) and are written at
+ * most once per key. `UPDATE`/`DELETE` are forbidden on all of them via
+ * triggers — this is the append-only invariant enforced at the storage
+ * engine level, per PROVENANCE_SPEC.md §10, not just by application
+ * convention.
  *
  * `device_revocations` and `session_ends` are split out from `devices` and
  * `sessions` rather than modeled as columns on those tables, because they
@@ -66,9 +87,9 @@
  * proving this.
  */
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
-export const SCHEMA_V1_DDL = `
+export const SCHEMA_V2_DDL = `
 CREATE TABLE schema_version (
   version INTEGER NOT NULL
 );
@@ -171,6 +192,18 @@ CREATE TABLE batch_validation_state (
   storedAt TEXT NOT NULL
 );
 
+CREATE TABLE contributor_references (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  profileId TEXT NOT NULL,
+  role TEXT NOT NULL,
+  subrole TEXT,
+  description TEXT,
+  claimedAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_contributor_references_project ON contributor_references(projectId);
+
 CREATE TRIGGER trg_devices_no_update BEFORE UPDATE ON devices BEGIN SELECT RAISE(ABORT, 'devices is append-only: rows cannot be updated'); END;
 CREATE TRIGGER trg_devices_no_delete BEFORE DELETE ON devices BEGIN SELECT RAISE(ABORT, 'devices is append-only: rows cannot be deleted'); END;
 
@@ -191,4 +224,7 @@ CREATE TRIGGER trg_checkpoints_no_delete BEFORE DELETE ON checkpoints BEGIN SELE
 
 CREATE TRIGGER trg_batches_no_update BEFORE UPDATE ON batches BEGIN SELECT RAISE(ABORT, 'batches is append-only: rows cannot be updated'); END;
 CREATE TRIGGER trg_batches_no_delete BEFORE DELETE ON batches BEGIN SELECT RAISE(ABORT, 'batches is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_contributor_references_no_update BEFORE UPDATE ON contributor_references BEGIN SELECT RAISE(ABORT, 'contributor_references is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_contributor_references_no_delete BEFORE DELETE ON contributor_references BEGIN SELECT RAISE(ABORT, 'contributor_references is append-only: rows cannot be deleted'); END;
 `;

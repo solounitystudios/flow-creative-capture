@@ -3,6 +3,7 @@ import {
   asAssetId,
   asBatchId,
   asCheckpointId,
+  asContributionClaimId,
   asDeviceId,
   asEventId,
   asProfileId,
@@ -16,6 +17,8 @@ import { createStudioSession, type StudioSession } from '../domain/studioSession
 import { createProvenanceEvent, type ProvenanceEvent } from '../domain/provenanceEvent.js';
 import { createProvenanceCheckpoint, type ProvenanceCheckpoint } from '../domain/provenanceCheckpoint.js';
 import { createProvenanceBatch, type ProvenanceBatch } from '../domain/provenanceBatch.js';
+import { createContributorReference, type ContributorReference } from '../domain/contributorReference.js';
+import type { ContributionRole } from '../domain/roles.js';
 import type { BatchValidationStatus } from '../domain/enums.js';
 
 /**
@@ -293,5 +296,41 @@ export function rowToBatch(row: BatchRow, validationState: BatchValidationStateR
     ...(row.signature !== null ? { signature: row.signature } : {}),
     validationStatus: (validationState?.validationStatus as BatchValidationStatus | undefined) ?? 'pending',
     createdAt: row.createdAt,
+  });
+}
+
+export interface ContributorReferenceRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly profileId: string;
+  readonly role: string;
+  readonly subrole: string | null;
+  readonly description: string | null;
+  readonly claimedAt: string;
+  readonly storedAt: string;
+}
+
+export function contributorReferenceToRow(claim: ContributorReference, storedAt: string): ContributorReferenceRow {
+  return {
+    id: claim.id,
+    projectId: claim.projectId,
+    profileId: claim.profileId,
+    role: claim.role,
+    subrole: claim.subrole ?? null,
+    description: claim.description ?? null,
+    claimedAt: claim.claimedAt,
+    storedAt,
+  };
+}
+
+export function rowToContributorReference(row: ContributorReferenceRow): ContributorReference {
+  return createContributorReference({
+    id: asContributionClaimId(row.id),
+    projectId: asProjectId(row.projectId),
+    profileId: asProfileId(row.profileId),
+    role: row.role as ContributionRole,
+    ...(row.subrole !== null ? { subrole: row.subrole } : {}),
+    ...(row.description !== null ? { description: row.description } : {}),
+    claimedAt: row.claimedAt,
   });
 }

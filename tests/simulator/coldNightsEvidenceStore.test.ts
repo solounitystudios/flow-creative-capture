@@ -116,4 +116,59 @@ describe('Cold Nights -> signed batch -> Local Evidence Store -> close/reopen ->
 
     store.close();
   });
+
+  it('persists Cold Nights\' explicit contributor claims (NightWire producer/songwriter, Marcus lead guitar) and reconstructs them after a store close/reopen', () => {
+    const scenario = runColdNightsScenario();
+    expect(scenario.contributors).toHaveLength(3);
+
+    const dbDir = makeTempDir('flow-cold-nights-contributors-db-');
+    const dbPath = join(dbDir, 'evidence.db');
+    let store = new LocalEvidenceStore(dbPath);
+
+    for (const claim of scenario.contributors) {
+      store.insertContributorReference(claim, claim.claimedAt);
+    }
+    store.close();
+
+    // Reopen — reconstruct purely from disk.
+    store = new LocalEvidenceStore(dbPath);
+    const reloadedClaims = store.listContributorReferencesForProject(scenario.project.id);
+    expect(reloadedClaims).toEqual(scenario.contributors);
+
+    const producerClaim = reloadedClaims.find((c) => c.role === 'producer');
+    expect(producerClaim).toMatchObject({
+      id: 'claim-nightwire-producer',
+      projectId: scenario.project.id,
+      profileId: scenario.nightwireSession.actorProfileId,
+      role: 'producer',
+      subrole: 'producer',
+    });
+
+    const songwriterClaim = reloadedClaims.find((c) => c.role === 'songwriter');
+    expect(songwriterClaim).toMatchObject({
+      id: 'claim-nightwire-songwriter',
+      projectId: scenario.project.id,
+      profileId: scenario.nightwireSession.actorProfileId,
+      role: 'songwriter',
+      subrole: 'melody',
+    });
+
+    const musicianClaim = reloadedClaims.find((c) => c.role === 'musician');
+    expect(musicianClaim).toMatchObject({
+      id: 'claim-marcus-musician',
+      projectId: scenario.project.id,
+      profileId: scenario.marcusSession.actorProfileId,
+      role: 'musician',
+      subrole: 'lead_guitar',
+    });
+
+    // Each claim retains its own claimedAt, individually — never
+    // defaulted or collapsed to a single project-level timestamp.
+    for (const claim of scenario.contributors) {
+      const reloaded = reloadedClaims.find((c) => c.id === claim.id);
+      expect(reloaded?.claimedAt).toBe(claim.claimedAt);
+    }
+
+    store.close();
+  });
 });
