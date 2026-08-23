@@ -74,3 +74,42 @@ export type {
 } from './evidence/bundle.js';
 export { assembleEvidenceBundle } from './evidence/bundle.js';
 export { EvidenceBundleAssemblyError } from './evidence/errors.js';
+
+/**
+ * Document Architecture V1 (`src/documents`) — Project Dossier and
+ * Delivery Package, both thin derived views over `EvidenceBundleExport`.
+ * Curated: internal derivation helpers (participant/activity aggregation,
+ * evidence-reference sorting) are NOT exported — `buildProjectDossier`
+ * and `buildDeliveryPackage` are the only intended entry points. See
+ * ARCHITECTURE.md's "Project Dossier" / "Delivery Package" sections for
+ * what each is, and is explicitly not (a rights/ownership determination,
+ * a contract, or a Passport credential in itself).
+ */
+export type {
+  BuildProjectDossierOptions,
+  DossierActivity,
+  DossierDisclaimers,
+  DossierParticipant,
+  DossierTrustSummary,
+  ProjectDossier,
+  ProjectDossierSourceRef,
+} from './documents/dossier.js';
+export { buildProjectDossier, DOSSIER_NOT_CLAIMED_NOTICES, DOSSIER_UNVERIFIED_NOTICES } from './documents/dossier.js';
+export type {
+  BuildDeliveryPackageOptions,
+  DeliveryPackage,
+  DeliveryPackageAudience,
+  DeliveryPackageIntegrityManifest,
+  DeliveryPackagePurpose,
+  DeliveryPackageSectionKey,
+  DeliveryPackageSections,
+  DeliveryPackageSourceRefs,
+  EvidenceRecordReference,
+} from './documents/deliveryPackage.js';
+export {
+  buildDeliveryPackage,
+  DELIVERY_PACKAGE_AUDIENCES,
+  DELIVERY_PACKAGE_PURPOSES,
+  DELIVERY_PACKAGE_SECTION_KEYS,
+} from './documents/deliveryPackage.js';
+export { DocumentAssemblyError } from './documents/errors.js';

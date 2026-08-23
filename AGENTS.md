@@ -4,7 +4,7 @@ This is the operating constitution for any coding agent (human-directed or auton
 
 ## Repository boundary — read this first
 
-`flow-creative-capture` owns: authenticated local creative sessions, the Studio Companion domain, local device identity, DAW bridge abstractions, creative-session event capture, approved project/file observation, asset hashing/fingerprinting, provenance events, provenance checkpoints, checkpoint-chain validation, contributor session attribution, asset lineage, project handoffs, offline provenance bundles, signed evidence bundles, synchronization contracts, and future AU/VST3/AAX/DAW bridges.
+`flow-creative-capture` owns: authenticated local creative sessions, the Studio Companion domain, local device identity, DAW bridge abstractions, creative-session event capture, approved project/file observation, asset hashing/fingerprinting, provenance events, provenance checkpoints, checkpoint-chain validation, contributor session attribution, asset lineage, project handoffs, offline provenance bundles, signed evidence bundles, Evidence Bundle Export, Project Dossiers, Delivery Packages, synchronization contracts (including the Passport disclosure contract), and future AU/VST3/AAX/DAW bridges.
 
 `flow-platform` owns: FLOW accounts, organizations, Passport, Work Passport, Project Passport, Catalog Passport, verification decisions, evidence review, contributor credentials, public credits, Wallet Passport, opportunities, events, reputation/reliability, organization administration, and public presentation.
 
@@ -19,10 +19,12 @@ This is the operating constitution for any coding agent (human-directed or auton
 
 Cryptographic provenance must never automatically be treated as legal ownership. If you find yourself computing a `rightsStatus` or a `RightsClaimReference.verificationStatus` from provenance data, stop — that is the one thing this codebase must never do. See `PROVENANCE_SPEC.md` §3.
 
+**A fifth, even more separate layer: Legal Agreements.** An actual contract or rights instrument is not built, generated, templated, or negotiated anywhere in this repository — not even a domain type for one exists yet. `RightsClaimReference.externalEvidenceReference` remains the only, opaque, reference-only pointer this codebase carries toward one. This applies with equal force to `src/documents` (Project Dossier, Delivery Package): summarizing or selectively disclosing evidence is not the same act as adjudicating a legal claim, and neither module may compute, infer, or default ownership, copyright, publishing rights, master ownership, royalty entitlement, work-for-hire status, licenses, assignments, or split acceptance from provenance/dossier/delivery-package content. See ARCHITECTURE.md's "Legal Agreement boundary."
+
 ## Agent roles
 
 ### Architecture Guardian
-Ensures repository boundaries and long-term architecture remain coherent. Before any structural change, checks: does this stay within the Creative Capture boundary above? Does it match `ARCHITECTURE.md`'s layering (Studio Companion → DAW Bridge → Provenance Engine → Local Evidence Store → Sync Client → FLOW Platform)? Rejects changes that reach into `flow-platform` concerns or that add a new top-level layer without updating `ARCHITECTURE.md` first.
+Ensures repository boundaries and long-term architecture remain coherent. Before any structural change, checks: does this stay within the Creative Capture boundary above? Does it match `ARCHITECTURE.md`'s layering (Studio Companion → DAW Bridge → Provenance Engine → Local Evidence Store → Trust Evaluation → Evidence Bundle → Project Dossier → Delivery Package → Sync Client → FLOW Platform, with Legal Agreement as a wholly separate, documented-only layer)? Rejects changes that reach into `flow-platform` concerns, that add a new top-level layer without updating `ARCHITECTURE.md` first, or that add a second "evidence bundle"/"disclosure" concept instead of extending the existing one.
 
 ### Provenance Integrity Auditor
 Protects append-oriented evidence, deterministic hashing, checkpoint chains, and asset lineage. Before approving a change to `src/domain`, `src/crypto`, or `src/provenance`, checks: does canonical serialization still produce identical output regardless of key insertion order? Does any factory mutate a previously-frozen object instead of returning a new one? Does `validateCheckpointChain` / `validateBatchChain` still catch tampering after the change? Does anything bypass `hashCanonicalValue` in favor of ad hoc `JSON.stringify`? This role has veto power over anything that weakens tamper detection, even for convenience or performance.
@@ -68,5 +70,8 @@ Verifies tests, CI, clean working state, and release readiness before anything i
 - Perceptual audio fingerprinting
 - Biometric identity or "proof of life"
 - Any real network call to a `flow-platform` endpoint (contracts only, per `src/sync/contracts.ts`)
+- Legal Agreement generation, templating, or negotiation of any kind
+- Automatic rights/ownership/authorship inference from Project Dossier or Delivery Package content
+- A second, competing "evidence bundle" or "disclosure payload" type — extend `EvidenceBundleExport`/`DeliveryPackage` instead
 
 Building any of the above without being explicitly asked is out of scope, regardless of how naturally it seems to follow from the architecture. The whole point of this bootstrap is to establish the common evidence/provenance standard before any of these integrations begin.

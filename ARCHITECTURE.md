@@ -3,29 +3,35 @@
 ## Data flow
 
 ```
-Studio Companion
+Studio Companion                                                    [PARTIAL — src/device]
       │  (authenticated local session, device identity)
       ▼
-  DAW Bridge
+  DAW Bridge                                                        [FUTURE]
       │  (translates native DAW activity into canonical ProvenanceEvents)
       ▼
-Provenance Engine
+Provenance Engine                                                   [IMPLEMENTED — src/provenance]
       │  (validates events, builds manifests, cuts checkpoints, tracks lineage)
       ▼
-Local Evidence Store
-      │  (append-oriented: events, checkpoints, batches, assets, relationships)
+Local Evidence Store                                                [IMPLEMENTED — src/store]
+      │  (append-oriented: devices, sessions, events, checkpoints, batches)
       ▼
- Trust Evaluation
+ Trust Evaluation                                                   [IMPLEMENTED — src/trust]
       │  (side-effect-free: signature, structure, device-trust dimensions -> claimStatus)
       ▼
-   Sync Client
-      │  (bundles + signs evidence, uploads when connectivity returns)
+ Evidence Bundle                                                    [IMPLEMENTED — src/evidence]
+      │  (deterministic, integrity-hashed, project-scoped export + trust snapshots)
       ▼
-  FLOW Platform
+ Project Dossier -> Delivery Package                                [IMPLEMENTED — src/documents]
+      │  (see "Document Architecture" below for the full 4-concept model)
+      ▼
+   Sync Client                                                      [CONTRACT ONLY — src/sync/contracts.ts]
+      │  (bundles + signs evidence, uploads when connectivity returns; no transport yet)
+      ▼
+  FLOW Platform                                                     [FUTURE, EXTERNAL]
       (interprets evidence, makes verification decisions, issues Passport credentials)
 ```
 
-This bootstrap implements the **Provenance Engine**, one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — the **Local Evidence Store** (`src/store`, added in `feature/local-evidence-store-v1`), **Trust Evaluation** (`src/trust`, added in `feature/signed-batch-trust-enforcement`), **Evidence Bundle Export** (`src/evidence`, this batch), and type-only **Sync Client** contracts. The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
+This bootstrap implements the **Provenance Engine**, one piece of **Studio Companion** — local device identity and batch signing (`src/device`, added in `feature/local-evidence-device-signing`) — the **Local Evidence Store** (`src/store`, added in `feature/local-evidence-store-v1`), **Trust Evaluation** (`src/trust`, added in `feature/signed-batch-trust-enforcement`), **Evidence Bundle Export** (`src/evidence`, `feature/evidence-bundle-export-v1`), **Document Architecture** (`src/documents`, this batch), and type-only **Sync Client** contracts (including the Passport disclosure contract added this batch). The rest of **Studio Companion**, **DAW Bridge** implementations, and the real **Sync Client** transport are future work — see "Known limitations" in project history and `AGENTS.md`'s DAW Integration Agent / Sync-API Agent roles.
 
 **Implementation status by piece**, since "future work" now covers pieces at different stages:
 
@@ -35,8 +41,11 @@ This bootstrap implements the **Provenance Engine**, one piece of **Studio Compa
 4. **Implemented — local evidence persistence.** `LocalEvidenceStore` (`src/store`) durably persists devices, sessions, provenance events, checkpoints, and signed batches to a local, append-only SQLite database (via Node's built-in `node:sqlite`). See "Local Evidence Store" below for the full design and `SECURITY.md` for exactly what durability does and does not add to the trust model.
 5. **Implemented — trust evaluation.** `src/trust` evaluates a persisted batch's signature, structural (checkpoint-chain and batch-chain), and current-device-trust dimensions, side-effect-free, into a derived `claimStatus`. See "Trust Evaluation" below for the ceiling state's exact, deliberately narrow meaning.
 6. **Implemented — Evidence Bundle Export V1.** `src/evidence` assembles a deterministic, project-scoped, integrity-hashed export of stored evidence plus frozen trust-evaluation snapshots. See "Evidence Bundle Export" below for its determinism, fail-closed, and private-key-boundary guarantees.
-7. **Future — synchronization.** `src/sync/contracts.ts` types only; no transport exists.
-8. **Future — FLOW Platform verification.** Entirely external to this repository; never invented here.
+7. **Implemented — Document Architecture V1 (Project Dossier, Delivery Package).** `src/documents` derives a thin, human-readable `ProjectDossier` summary from one Evidence Bundle, and a recipient/purpose-specific `DeliveryPackage` view from a Dossier. See "Document Architecture" below for the full four-concept model (Evidence Bundle / Project Dossier / Delivery Package / Legal Agreement) and its privacy-by-default disclosure boundary.
+8. **Contract only — Passport / selective disclosure.** `src/sync/contracts.ts`'s `DisclosureRequest`/`DisclosureResponse` pin down the shape a future FLOW Platform Passport-verification request/response would take — a `DisclosureResponse` is exactly a `DeliveryPackage` built with `audience: 'flow_passport_verification'`. No request handling, authentication, or transport exists.
+9. **Documented boundary only — Legal Agreements.** Never generated, inferred, or adjudicated by this repository at any layer. See "Legal Agreement boundary" below.
+10. **Future — synchronization.** `src/sync/contracts.ts` types only; no transport exists.
+11. **Future — FLOW Platform verification.** Entirely external to this repository; never invented here.
 
 ## Responsibilities by layer
 
@@ -102,7 +111,7 @@ Sits between Trust Evaluation and any future Sync Client / document system. `ass
 
 **What an Evidence Bundle is:** a deterministic, project-scoped, integrity-protected export of stored provenance/evidence plus frozen trust-evaluation results, as they exist in the local store at export time.
 
-**What an Evidence Bundle is explicitly NOT:** a copyright registration, an ownership or authorship determination, legal clearance, a contract, a rights transfer, a finished professional dossier, or a Passport credential in itself. `TrustEvaluationSnapshot`'s ceiling state (`locally_sound_unverified_claim`) carries exactly the same narrow meaning here as it does in Trust Evaluation — see that section above and PROVENANCE_SPEC.md §3. An Evidence Bundle is **evidence infrastructure**; it is expected to later serve as the underlying source material that derived, audience-specific views — a human-readable Project Dossier, a recipient-specific Delivery Package — are built from. Neither of those derived document types exists yet; this batch does not build them.
+**What an Evidence Bundle is explicitly NOT:** a copyright registration, an ownership or authorship determination, legal clearance, a contract, a rights transfer, a finished professional dossier, or a Passport credential in itself. `TrustEvaluationSnapshot`'s ceiling state (`locally_sound_unverified_claim`) carries exactly the same narrow meaning here as it does in Trust Evaluation — see that section above and PROVENANCE_SPEC.md §3. An Evidence Bundle is **evidence infrastructure**; it is the underlying source material that the derived, audience-specific views below — Project Dossier, Delivery Package — are built from.
 
 **Determinism.** Two calls against the same unchanged store state with the same `exportedAt` are byte-for-byte identical, including `integrityManifest.canonicalHash` — no hidden wall-clock reads, no unstable iteration order (sessions/events/batches are explicitly sorted by their own timestamp then id before hashing), no random ids.
 
@@ -114,8 +123,74 @@ Sits between Trust Evaluation and any future Sync Client / document system. `ass
 
 **Documentation envelope, deliberately narrow.** `options.documentationProfile` (`'traditional' | 'ai_native' | 'hybrid'`) is a caller-declared label describing what kind of documentation this export is *for*, carried through as `EvidenceBundleDocumentationEnvelope { profile, registryVersion: 'music-v1' }` — nothing more. Requesting `'ai_native'` or `'hybrid'` never implies AI-generation provenance was actually captured: this evidence model has no generation-event shape and no prompt/model/tool metadata yet (`ProjectAsset.sourceType`'s `ai_generated`/`ai_assisted` values are the only AI-related vocabulary that exists today, and `ProjectAsset` itself is not even persisted by the Local Evidence Store — see above). The document subsystem this envelope is a placeholder for does not exist yet and is not built in this batch.
 
+## Document Architecture (`src/documents`)
+
+Four distinct concepts sit above the evidence layer, deliberately kept structurally separate — none is interchangeable with another, and none may be inferred from another:
+
+```
+Evidence Bundle            [IMPLEMENTED — src/evidence]
+      │  (technical evidence/provenance package; the source of truth)
+      ▼
+Project Dossier            [IMPLEMENTED — src/documents/dossier.ts]
+      │  (thin, human-readable summary derived from one Evidence Bundle)
+      ▼
+Delivery Package           [IMPLEMENTED — src/documents/deliveryPackage.ts]
+      (recipient/purpose-specific selection of Dossier + evidence references)
+
+Legal Agreement            [DOCUMENTED BOUNDARY ONLY — not built]
+      (an actual contract/rights instrument; a wholly separate, external layer —
+       see "Legal Agreement boundary" below)
+```
+
+And, as one specific use of Delivery Package rather than a fifth concept:
+
+```
+Selected Evidence / Disclosure     [IMPLEMENTED as a DeliveryPackage
+      │                             built with audience: 'flow_passport_verification']
+      ▼
+Future FLOW Platform Verification  [FUTURE, EXTERNAL — never built here]
+      │
+      ▼
+Future Passport Credential         [FUTURE, EXTERNAL — never built here]
+```
+
+Evidence/provenance may eventually *support* a legal claim, a contribution credit, or a Passport credential decision — it must never be *automatically represented as* one. This section exists to keep that line structural, not just conventional, exactly as PROVENANCE_SPEC.md §3 already does one layer down for provenance-vs-rights specifically.
+
+### Project Dossier (`src/documents/dossier.ts`)
+`buildProjectDossier(bundle, options)` is a **pure, read-only** derivation over one `EvidenceBundleExport` — it performs no store access, no network calls, and reimplements no hashing or trust logic. It deliberately does **not** become a second evidence database: it never re-embeds the bundle's own `sessions`/`events`/`checkpoints`/`batches` arrays, referencing the source bundle instead by `exportedAt` + `integrityManifest.canonicalHash`. What it does carry is aggregate and summary only:
+
+- `participants` — one entry per distinct `actorProfileId` seen across the bundle's sessions/events (session count, event count, first/last activity), answering "who participated" in terms of the person who acted, not the device that recorded it.
+- `activity` — project-wide counts (sessions, events, checkpoints, batches, devices) plus an activity date range.
+- `trust` — a rollup of the bundle's own `TrustEvaluationSnapshot`s (`claimStatusCounts`, `allBatchesSound`) — never a new trust computation.
+- `disclaimers` — fixed, deterministic notice text (`DOSSIER_UNVERIFIED_NOTICES`, `DOSSIER_NOT_CLAIMED_NOTICES`) stating plainly that nothing here is FLOW-verified, and that copyright/publishing/master-ownership/licensing/work-for-hire/AI-provenance-beyond-what-was-captured are never claimed. This is fixed text, not project-specific prose the module would have to get right on a case-by-case basis.
+- `documentationProfile` — carried through unchanged from the bundle's own `documentation?.profile` when present; never invented if the bundle didn't set one.
+
+Not present in V1, honestly: an assets/evidence inventory. The Local Evidence Store does not persist `ProjectAsset` (see "Local Evidence Store" above), so a dossier has no truthful source for "what assets exist" beyond bare `assetId` references on individual events — which are not aggregated here, to avoid inventing a second, incomplete asset index. This is added when a store version that actually persists assets exists, not before.
+
+**Deterministic.** Given the same bundle and the same caller-supplied `generatedAt`, two calls produce a byte-for-byte identical dossier — no wall-clock reads, no unstable iteration order (participants sorted by `profileId`, timestamps sorted before taking min/max), no random ids.
+
+### Delivery Package (`src/documents/deliveryPackage.ts`)
+`buildDeliveryPackage(bundle, dossier, options)` assembles a recipient/purpose-specific **view**, never a second evidence source. Every field is copied from the `ProjectDossier`/`EvidenceBundleExport` it was given, filtered to exactly the sections `options.includeSections` requested; the underlying dossier and bundle are read, never written or reinterpreted.
+
+- `audience` (`DELIVERY_PACKAGE_AUDIENCES`): collaborator, producer, artist, label, publisher, manager, attorney, distributor, sync_licensing_team, platform, archive, flow_passport_verification, other. A controlled vocabulary reserving the future recipient types without building any of their actual workflows yet.
+- `purpose` (`DELIVERY_PACKAGE_PURPOSES`): review, verification, archival, licensing, legal_review, general_reference, other.
+- `sections` (`DELIVERY_PACKAGE_SECTION_KEYS`): project, participants, activity, trustSummary, documentationProfile, evidenceReferences, disclaimers — each populated only when requested; `includedSections`/`omittedSections` list which, always in this fixed canonical order regardless of request order.
+- `source`: explicit pointers to the source Evidence Bundle (`exportedAt` + `canonicalHash`) and source Project Dossier (`generatedAt` + `dossierVersion`) — never a copy of either in full.
+- `integrityManifest`: a SHA-256 hash over the package's own content, computed with the same `hashCanonicalValue` every other hash in this codebase uses.
+
+**Privacy by default.** `evidenceReferences` — the one section that reaches back into the raw bundle rather than just the dossier's summary — carries only `{kind, id, at}` per record: never a `ProvenanceEvent.payload`, an `assetId`/`trackReference`, a batch `signature`, or a device's public key. A recipient who genuinely needs to independently re-verify a signature or inspect an event's payload needs the full `EvidenceBundleExport` itself, through a separate, explicit channel — Delivery Package V1 does not carry that by default, on purpose.
+
+**Fail-closed, never guesses.** An unrecognized `audience`/`purpose`/section key throws `DocumentAssemblyError` rather than silently defaulting. A `dossier` whose `sourceEvidenceBundle.canonicalHash` doesn't match the given `bundle.integrityManifest.canonicalHash` — i.e. a dossier not actually derived from this bundle — throws rather than assembling a package over mismatched sources.
+
+**This is also the selective-disclosure vehicle for a future Passport flow**, not a separate mechanism: a Delivery Package built with `audience: 'flow_passport_verification'` IS the disclosed material `DisclosureResponse` (`src/sync/contracts.ts`) refers to. There is deliberately no second, competing "disclosure payload" type — see "Passport / selective disclosure" below.
+
+### Legal Agreement boundary (documented only, not built)
+A Legal Agreement — an actual contract or rights instrument — is a wholly separate, external layer. Creative Capture does not generate, template, or negotiate one, and this batch does not add a domain type for one: `RightsClaimReference.externalEvidenceReference` (already reference-only, per PROVENANCE_SPEC.md §3) remains the only place this repository can point at one, by opaque string reference, exactly as it already could before this batch. Nothing in `src/documents` computes, infers, or defaults any of: ownership, copyright, publishing rights, master ownership, royalty entitlement, work-for-hire status, licenses, assignments, or split acceptance, from provenance/dossier/delivery-package content. If a future batch needs a real typed pointer to an external agreement, that is a new, explicit, minimal addition when something actually requires it — not built ahead of that need.
+
 ### Sync Client (future, contracts only)
 `src/sync/contracts.ts` defines `EvidenceBundle`, `SyncAcknowledgement`, and the `EvidenceSyncClient` interface — the *shape* of what will eventually be exchanged with `flow-platform`. It contains zero transport code and zero endpoint URLs, because those do not exist yet and must not be invented here.
+
+**Passport / selective disclosure (contract only, added this batch).** `DisclosureRequest` (a `projectId` plus the `DeliveryPackageSectionKey`s being asked for) and `DisclosureResponse` (a type alias for `DeliveryPackage`) pin down the shape a future Passport-verification request/response would take. No request handling, authentication, or transport exists — these are types only, exactly like the rest of this file. **Critical rule, enforced by never building past this line:** Creative Capture does not issue a FLOW Passport credential and does not decide whether to grant a disclosure request; it only supplies evidence-derived material. Identity verification, contribution verification, policy interpretation, credential issuance/revocation, and Passport display rules remain entirely FLOW Platform's responsibility — see AGENTS.md's repository boundary.
 
 ### FLOW Platform (out of scope, external)
 Owns accounts, organizations, Passport, Work Passport, Project Passport, Catalog Passport, verification decisions, contributor credentials, public credits, Wallet Passport, opportunities, events, reputation, and public presentation. Creative Capture never reaches into it and never fabricates its API surface.
@@ -129,8 +204,12 @@ Owns accounts, organizations, Passport, Work Passport, Project Passport, Catalog
 | Local Evidence Store (internal) | Public device verification material (`publicKeySpkiDer`) | Private key material — never enters `src/store`; stays under `FileDeviceKeyStore` |
 | Local Evidence Store → Trust Evaluation | Persisted batches/checkpoints/devices, read-only | Any write back to the store — `src/trust` never mutates `batch_validation_state` or anything else |
 | Trust Evaluation → Evidence Bundle Export | A frozen `TrustEvaluationSnapshot` per batch (`claimStatus` of `locally_sound_unverified_claim` included, as-is) | Any claim that a snapshot means factual truth, verified authorship/contribution/final-use, or legal ownership — see `src/trust/batchTrust.ts` and `src/evidence/bundle.ts` |
+| Evidence Bundle Export → Project Dossier | Read-only summarization (participants, activity counts, trust rollup) | Re-embedding the bundle's own record arrays as a second evidence store; any rights/ownership field — see `src/documents/dossier.ts` |
+| Project Dossier → Delivery Package | Selected dossier sections, verbatim, plus redacted `{kind,id,at}` evidence references when requested | `ProvenanceEvent.payload`, batch `signature`, device public keys, or any section not explicitly requested — see `src/documents/deliveryPackage.ts` |
 | Local Evidence Store / Evidence Bundle Export → Sync Client | An `EvidenceBundleExport` — sessions/events/checkpoints/batches, public device metadata, and trust snapshots, integrity-hashed (the Sync Client transport itself is still future) | Live/unbounded raw project files; private key material (never read by `src/evidence`, only public keys) |
+| Delivery Package → FLOW Platform (disclosure, contract only) | A `DeliveryPackage` built with `audience: 'flow_passport_verification'` — exactly the sections it explicitly includes | The rest of the private Evidence Bundle/Dossier not selected; any claim that this constitutes FLOW verification or credential issuance — see `src/sync/contracts.ts`'s `DisclosureRequest`/`DisclosureResponse` |
 | Sync Client → FLOW Platform | Evidence bundles | Any claim that Creative Capture itself grants a Passport credential or verifies rights |
+| Anything in this repository → Legal Agreement | An opaque reference only (`RightsClaimReference.externalEvidenceReference`) | Ownership, copyright, publishing rights, master ownership, royalty entitlement, work-for-hire status, licenses, assignments, or split acceptance inferred from provenance/dossier/delivery-package content — see "Legal Agreement boundary" above |
 
 A device or plugin producing events is **never** treated as fully trusted on its own — the eventual FLOW Platform server is the authoritative validator. This repository builds the evidence; it does not adjudicate it. See `SECURITY.md`.
 

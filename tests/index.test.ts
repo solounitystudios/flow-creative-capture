@@ -84,3 +84,27 @@ describe('package public surface — evidence bundle export', () => {
     expect('deriveProjectWorkReference' in pkg).toBe(false);
   });
 });
+
+describe('package public surface — document architecture (dossier, delivery package)', () => {
+  it('exports buildProjectDossier, buildDeliveryPackage, and DocumentAssemblyError', () => {
+    expect(typeof pkg.buildProjectDossier).toBe('function');
+    expect(typeof pkg.buildDeliveryPackage).toBe('function');
+    expect(typeof pkg.DocumentAssemblyError).toBe('function');
+  });
+
+  it('exports the controlled-vocabulary constants as arrays', () => {
+    expect(Array.isArray(pkg.DOSSIER_UNVERIFIED_NOTICES)).toBe(true);
+    expect(Array.isArray(pkg.DOSSIER_NOT_CLAIMED_NOTICES)).toBe(true);
+    expect(Array.isArray(pkg.DELIVERY_PACKAGE_AUDIENCES)).toBe(true);
+    expect(Array.isArray(pkg.DELIVERY_PACKAGE_PURPOSES)).toBe(true);
+    expect(Array.isArray(pkg.DELIVERY_PACKAGE_SECTION_KEYS)).toBe(true);
+  });
+
+  it('does not expose internal derivation helpers', () => {
+    expect('buildParticipants' in pkg).toBe(false);
+    expect('buildActivity' in pkg).toBe(false);
+    expect('buildTrustSummary' in pkg).toBe(false);
+    expect('buildEvidenceReferences' in pkg).toBe(false);
+    expect('compareProfileIds' in pkg).toBe(false);
+  });
+});
