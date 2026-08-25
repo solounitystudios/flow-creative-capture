@@ -6,12 +6,24 @@ import {
   asContributionClaimId,
   asDeviceId,
   asEventId,
+  asExternalProjectPassportId,
+  asOrganizationId,
   asProfileId,
   asProjectId,
   asSessionId,
   asWorkReferenceId,
 } from '../domain/ids.js';
-import type { Daw, EventSource, EventType, CheckpointTriggerType, Platform, SessionStatus } from '../domain/enums.js';
+import type {
+  Daw,
+  EventSource,
+  EventType,
+  CheckpointTriggerType,
+  Platform,
+  ProjectStatus,
+  ProjectType,
+  SessionStatus,
+} from '../domain/enums.js';
+import { createCreativeProject, type CreativeProject } from '../domain/creativeProject.js';
 import { createStudioDevice, type StudioDevice } from '../domain/studioDevice.js';
 import { createStudioSession, type StudioSession } from '../domain/studioSession.js';
 import { createProvenanceEvent, type ProvenanceEvent } from '../domain/provenanceEvent.js';
@@ -30,6 +42,50 @@ import type { AssetType, BatchValidationStatus, OriginStatus, RightsVerification
  * duplicating it, and guarantees a reconstructed object has exactly the
  * shape the rest of the codebase already expects.
  */
+
+export interface ProjectRow {
+  readonly id: string;
+  readonly ownerProfileId: string;
+  readonly organizationId: string | null;
+  readonly externalProjectPassportId: string | null;
+  readonly title: string;
+  readonly projectType: string;
+  readonly status: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly storedAt: string;
+}
+
+export function projectToRow(project: CreativeProject, storedAt: string): ProjectRow {
+  return {
+    id: project.id,
+    ownerProfileId: project.ownerProfileId,
+    organizationId: project.organizationId ?? null,
+    externalProjectPassportId: project.externalProjectPassportId ?? null,
+    title: project.title,
+    projectType: project.projectType,
+    status: project.status,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    storedAt,
+  };
+}
+
+export function rowToProject(row: ProjectRow): CreativeProject {
+  return createCreativeProject({
+    id: asProjectId(row.id),
+    ownerProfileId: asProfileId(row.ownerProfileId),
+    ...(row.organizationId !== null ? { organizationId: asOrganizationId(row.organizationId) } : {}),
+    ...(row.externalProjectPassportId !== null
+      ? { externalProjectPassportId: asExternalProjectPassportId(row.externalProjectPassportId) }
+      : {}),
+    title: row.title,
+    projectType: row.projectType as ProjectType,
+    status: row.status as ProjectStatus,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+}
 
 export interface DeviceRow {
   readonly id: string;

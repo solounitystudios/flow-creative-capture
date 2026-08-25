@@ -1,5 +1,5 @@
 /**
- * Local Evidence Store — schema version 3.
+ * Local Evidence Store — schema version 4.
  *
  * V1 (the Local Evidence Store V1 batch) persisted exactly the objects
  * needed to reconstruct and independently re-verify locally captured
@@ -35,27 +35,48 @@
  * persist a single asset's own metadata, same "don't build ahead of an
  * actual need" reasoning V1 already applied to this table itself.
  *
+ * V4 (Capture Studio V1 — the local Studio service write path) adds
+ * exactly one new table, `projects`: durable persistence for
+ * `CreativeProject` (`src/domain/creativeProject.ts`), which no prior
+ * version of this store persisted at all — every earlier consumer only
+ * ever needed `projectId` as a foreign string scoping sessions/events/
+ * checkpoints/batches/assets, never the project record itself. Same
+ * immutable-fact-table posture as every other table here: `CreativeProject`
+ * has no domain-level transition function (no `updateCreativeProjectStatus`
+ * or similar), so `projects` is insert-once with the same append-only
+ * triggers as `devices`/`sessions`/etc., not a mutable table — if a future
+ * batch adds a real status-transition domain function, that is the point
+ * to reconsider this table's shape, not before. Deliberately no
+ * `REFERENCES projects(id)` is added retroactively to
+ * `sessions.projectId`/`events.projectId`/`checkpoints.projectId`/
+ * `project_assets.projectId`: those columns already existed as plain
+ * foreign strings before `projects` did, every existing caller (including
+ * the Cold Nights simulator fixture) persists sessions/events without ever
+ * persisting a project, and enforcing that relationship now would be an
+ * unrelated, breaking schema change to four already-shipped tables rather
+ * than the minimum addition this version actually needs.
+ *
  * **Backward compatibility.** This store has no migration engine (see
  * `database.ts`'s `UnsupportedSchemaVersionError` — an existing database
  * with a different schema version is always rejected outright, never
  * silently migrated or reinterpreted). Bumping `CURRENT_SCHEMA_VERSION`
- * from 2 to 3 for this table addition is therefore not optional, for the
- * exact same reason the 1-to-2 bump was not optional: a V2 database is
- * missing `project_assets` entirely, so opening it under V3 code without a
+ * from 3 to 4 for this table addition is therefore not optional, for the
+ * exact same reason every prior bump was not optional: a V3 database is
+ * missing `projects` entirely, so opening it under V4 code without a
  * version bump would let it look "compatible" (same version number) while
  * actually being structurally different — exactly the silent-mismatch
  * failure mode this store's version check exists to prevent. With the
- * bump, a V2 database is safely rejected with `UnsupportedSchemaVersionError`
+ * bump, a V3 database is safely rejected with `UnsupportedSchemaVersionError`
  * and left completely untouched, exactly like any other unsupported
  * version — see `tests/store/database.test.ts`'s "rejects a
- * pre-ProjectAsset (schema version 2) database safely" for the regression
+ * pre-projects (schema version 3) database safely" for the regression
  * proof.
  *
  * ## Table shapes
  *
  * IMMUTABLE FACT tables (`devices`, `device_revocations`, `sessions`,
  * `session_ends`, `events`, `checkpoints`, `batches`, `contributor_references`,
- * `project_assets`) have a PRIMARY KEY on the domain id (or, for the two
+ * `project_assets`, `projects`) have a PRIMARY KEY on the domain id (or, for the two
  * "_ends"/"_revocations" side tables, on the id of the fact they attach
  * to) and are written at most once per key. `UPDATE`/`DELETE` are
  * forbidden on all of them via triggers — this is the append-only
@@ -102,11 +123,24 @@
  * proving this.
  */
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
-export const SCHEMA_V3_DDL = `
+export const SCHEMA_V4_DDL = `
 CREATE TABLE schema_version (
   version INTEGER NOT NULL
+);
+
+CREATE TABLE projects (
+  id TEXT PRIMARY KEY,
+  ownerProfileId TEXT NOT NULL,
+  organizationId TEXT,
+  externalProjectPassportId TEXT,
+  title TEXT NOT NULL,
+  projectType TEXT NOT NULL,
+  status TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
 );
 
 CREATE TABLE devices (
@@ -265,4 +299,7 @@ CREATE TRIGGER trg_contributor_references_no_delete BEFORE DELETE ON contributor
 
 CREATE TRIGGER trg_project_assets_no_update BEFORE UPDATE ON project_assets BEGIN SELECT RAISE(ABORT, 'project_assets is append-only: rows cannot be updated'); END;
 CREATE TRIGGER trg_project_assets_no_delete BEFORE DELETE ON project_assets BEGIN SELECT RAISE(ABORT, 'project_assets is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_projects_no_update BEFORE UPDATE ON projects BEGIN SELECT RAISE(ABORT, 'projects is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_projects_no_delete BEFORE DELETE ON projects BEGIN SELECT RAISE(ABORT, 'projects is append-only: rows cannot be deleted'); END;
 `;

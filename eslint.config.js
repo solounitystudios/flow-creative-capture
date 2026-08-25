@@ -4,7 +4,11 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
+    // apps/** is a separate workspace package (Capture Studio Shell) with
+    // its own eslint config, own tsconfig, and its own `npm run lint`.
+    // Never let the core engine's project-service-based lint reach into
+    // it -- those files aren't part of this tsconfig's program.
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'apps/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

@@ -1,0 +1,954 @@
+{
+  "schemaNote": "Real FLOW Creative Capture engine output for the Cold Nights demo scenario, generated once by scripts/generateFixture.ts and frozen as static data. All six assets, the Evidence Bundle, Project Dossier, and Delivery Packages below were produced by genuinely persisting to a file-backed LocalEvidenceStore, closing it, reopening it, and reading back through the real assembleEvidenceBundle/buildProjectDossier/buildDeliveryPackage pipeline -- not a bypass. relationships is the one exception: AssetRelationship has no persistence anywhere in this codebase yet, so it is carried through directly from the in-memory simulator scenario and must only ever be shown in the UI behind an explicit demo-graph label. Nothing in this file is live or interactive.",
+  "generatedAt": "2026-01-07T09:05:00.000Z",
+  "project": {
+    "id": "project-cold-nights",
+    "ownerProfileId": "profile-nightwire",
+    "title": "Cold Nights",
+    "projectType": "song",
+    "status": "active",
+    "createdAt": "2026-01-05T18:00:00.000Z",
+    "updatedAt": "2026-01-05T18:01:00.000Z"
+  },
+  "workReference": {
+    "id": "work-cold-nights",
+    "projectId": "project-cold-nights",
+    "title": "Cold Nights",
+    "createdAt": "2026-01-05T18:02:00.000Z"
+  },
+  "relationships": [
+    {
+      "id": "rel-midi-to-stem",
+      "fromAssetId": "asset-midi-beat",
+      "toAssetId": "asset-stem-beat",
+      "relationshipType": "derived_from",
+      "createdAt": "2026-01-05T18:17:00.000Z"
+    },
+    {
+      "id": "rel-sample-to-stem",
+      "fromAssetId": "asset-sample-pad",
+      "toAssetId": "asset-stem-beat",
+      "relationshipType": "contains",
+      "createdAt": "2026-01-05T18:18:00.000Z"
+    },
+    {
+      "id": "rel-stem-to-mix",
+      "fromAssetId": "asset-stem-beat",
+      "toAssetId": "asset-final-mix",
+      "relationshipType": "mixed_into",
+      "createdAt": "2026-01-05T18:31:00.000Z"
+    },
+    {
+      "id": "rel-guitar-to-mix",
+      "fromAssetId": "asset-guitar-take",
+      "toAssetId": "asset-final-mix",
+      "relationshipType": "mixed_into",
+      "createdAt": "2026-01-05T18:32:00.000Z"
+    },
+    {
+      "id": "rel-mix-to-master",
+      "fromAssetId": "asset-final-mix",
+      "toAssetId": "asset-final-master",
+      "relationshipType": "mastered_from",
+      "createdAt": "2026-01-05T18:35:00.000Z"
+    }
+  ],
+  "bundle": {
+    "manifestVersion": 1,
+    "exportedAt": "2026-01-07T09:00:00.000Z",
+    "project": {
+      "projectId": "project-cold-nights",
+      "workReference": "work-cold-nights"
+    },
+    "devices": [
+      {
+        "deviceId": "device-marcus-01",
+        "profileId": "profile-marcus",
+        "platform": "windows",
+        "appVersion": "1.0.0-sim",
+        "deviceKeyFingerprint": "baf436ebbc6e4a58ce8fb22310e84de7ef89893132881116835f643374e5388d",
+        "publicKeySpkiDerBase64": "MCowBQYDK2VwAyEA1g8tNl55GwtUStsjNSGYn8nZk2t0nXS8EgvGHWR1dg4=",
+        "verifiedAt": "2026-01-05T18:07:00.000Z"
+      },
+      {
+        "deviceId": "device-nightwire-01",
+        "profileId": "profile-nightwire",
+        "platform": "macos",
+        "appVersion": "1.0.0-sim",
+        "deviceKeyFingerprint": "3092f6c7c523bd2c239ba21985ffe2286da21f2695bc4e95f206a72c7fd4157d",
+        "publicKeySpkiDerBase64": "MCowBQYDK2VwAyEAKAkKWOh7T/CeDHAq+ZvvhdCEaVzTAYnFNyDe44DSj+0=",
+        "verifiedAt": "2026-01-05T18:06:00.000Z"
+      }
+    ],
+    "sessions": [
+      {
+        "id": "session-nightwire-01",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "daw": "fl_studio",
+        "dawVersion": "21.0",
+        "startedAt": "2026-01-05T18:08:00.000Z",
+        "endedAt": "2026-01-05T18:20:00.000Z",
+        "status": "ended"
+      },
+      {
+        "id": "session-marcus-01",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "daw": "logic_pro",
+        "dawVersion": "11.0",
+        "startedAt": "2026-01-05T18:23:00.000Z",
+        "endedAt": "2026-01-05T18:29:00.000Z",
+        "status": "ended"
+      }
+    ],
+    "events": [
+      {
+        "eventId": "event-session-started-nightwire",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "fl_studio",
+        "eventType": "session_started",
+        "occurredAt": "2026-01-05T18:08:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-contributor-nightwire",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "fl_studio",
+        "eventType": "contributor_added",
+        "occurredAt": "2026-01-05T18:09:00.000Z",
+        "payload": {
+          "profileId": "profile-nightwire",
+          "role": "producer"
+        }
+      },
+      {
+        "eventId": "event-midi-created",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "fl_studio",
+        "eventType": "midi_created",
+        "assetId": "asset-midi-beat",
+        "trackReference": "track-1-beat",
+        "occurredAt": "2026-01-05T18:11:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-sample-imported",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "fl_studio",
+        "eventType": "asset_imported",
+        "assetId": "asset-sample-pad",
+        "trackReference": "track-2-pad",
+        "occurredAt": "2026-01-05T18:13:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-checkpoint-1",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "fl_studio",
+        "eventType": "checkpoint_created",
+        "occurredAt": "2026-01-05T18:15:00.000Z",
+        "payload": {
+          "checkpointId": "checkpoint-0"
+        }
+      },
+      {
+        "eventId": "event-stem-exported",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "fl_studio",
+        "eventType": "stem_exported",
+        "assetId": "asset-stem-beat",
+        "occurredAt": "2026-01-05T18:19:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-session-ended-nightwire",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "fl_studio",
+        "eventType": "session_ended",
+        "occurredAt": "2026-01-05T18:20:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-handoff-created",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "source": "flow_companion",
+        "eventType": "handoff_created",
+        "occurredAt": "2026-01-05T18:21:00.000Z",
+        "payload": {
+          "handoffId": "handoff-nightwire-to-marcus"
+        }
+      },
+      {
+        "eventId": "event-handoff-accepted",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "flow_companion",
+        "eventType": "handoff_accepted",
+        "occurredAt": "2026-01-05T18:22:00.000Z",
+        "payload": {
+          "handoffId": "handoff-nightwire-to-marcus"
+        }
+      },
+      {
+        "eventId": "event-session-started-marcus",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "session_started",
+        "occurredAt": "2026-01-05T18:23:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-contributor-marcus",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "contributor_added",
+        "occurredAt": "2026-01-05T18:24:00.000Z",
+        "payload": {
+          "profileId": "profile-marcus",
+          "role": "musician",
+          "subrole": "lead_guitar"
+        }
+      },
+      {
+        "eventId": "event-guitar-recorded",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "audio_recorded",
+        "assetId": "asset-guitar-take",
+        "trackReference": "track-3-guitar",
+        "occurredAt": "2026-01-05T18:26:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-checkpoint-2",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "checkpoint_created",
+        "occurredAt": "2026-01-05T18:28:00.000Z",
+        "payload": {
+          "checkpointId": "checkpoint-1"
+        }
+      },
+      {
+        "eventId": "event-session-ended-marcus",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "session_ended",
+        "occurredAt": "2026-01-05T18:29:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-mix-exported",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "mix_exported",
+        "assetId": "asset-final-mix",
+        "occurredAt": "2026-01-05T18:33:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-master-exported",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "master_exported",
+        "assetId": "asset-final-master",
+        "occurredAt": "2026-01-05T18:36:00.000Z",
+        "payload": {}
+      },
+      {
+        "eventId": "event-checkpoint-3",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "checkpoint_created",
+        "occurredAt": "2026-01-05T18:38:00.000Z",
+        "payload": {
+          "checkpointId": "checkpoint-2"
+        }
+      },
+      {
+        "eventId": "event-final-master-designated",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "source": "logic_pro",
+        "eventType": "final_master_designated",
+        "assetId": "asset-final-master",
+        "occurredAt": "2026-01-05T18:40:00.000Z",
+        "payload": {
+          "releaseCandidateId": "release-candidate-v1"
+        }
+      }
+    ],
+    "checkpoints": [
+      {
+        "id": "checkpoint-0",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-nightwire-01",
+        "actorProfileId": "profile-nightwire",
+        "sequence": 0,
+        "manifestHash": "67c9f1b2105a355a30161faa163411e60aa21b2732a102ee48f84a960a2727c7",
+        "checkpointHash": "83cf68fa6e68075590c46850b147220d1d2fd9ac784c7e5f1e4c87c3c451e081",
+        "triggerType": "recording_batch",
+        "createdAt": "2026-01-05T18:14:00.000Z"
+      },
+      {
+        "id": "checkpoint-1",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "sequence": 1,
+        "previousCheckpointHash": "83cf68fa6e68075590c46850b147220d1d2fd9ac784c7e5f1e4c87c3c451e081",
+        "manifestHash": "c16fb13a530ae9de9783c7b4af0e8822afcb3de1b12b1bcc9dac3fb057b4bb6a",
+        "checkpointHash": "3c80ec1cc82eb2a5aafe1aa4e966acbd17539546e1287d6ce126cc40de0e7500",
+        "triggerType": "recording_batch",
+        "createdAt": "2026-01-05T18:27:00.000Z"
+      },
+      {
+        "id": "checkpoint-2",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "sessionId": "session-marcus-01",
+        "actorProfileId": "profile-marcus",
+        "sequence": 2,
+        "previousCheckpointHash": "3c80ec1cc82eb2a5aafe1aa4e966acbd17539546e1287d6ce126cc40de0e7500",
+        "manifestHash": "2f328ba564e505bb867762bd10e79877345c9d6f420c47fac3ddf23a829450ae",
+        "checkpointHash": "aeb8c073e4a84903f2277d3edc30c789a0b7c1664b6cf3e95e38b6eff39ebf8e",
+        "triggerType": "final_master",
+        "createdAt": "2026-01-05T18:37:00.000Z"
+      }
+    ],
+    "batches": [
+      {
+        "id": "batch-fixture-nightwire-01",
+        "profileId": "profile-nightwire",
+        "deviceId": "device-nightwire-01",
+        "sessionId": "session-nightwire-01",
+        "eventCount": 8,
+        "firstEventAt": "2026-01-05T18:08:00.000Z",
+        "lastEventAt": "2026-01-05T18:21:00.000Z",
+        "manifestHash": "4f0796efa88395d5de86ac8ff9042878e515aae7a36d41e288240ac9f0407b0b",
+        "signature": "6CqGsiUMdObz9K+eButomDnRQbqCzXnStByHDm2Eb3suAO6eGR+an2BX5zHHvP6X/tD8iZkNgFx4DfHB8AJWAw==",
+        "validationStatus": "pending",
+        "createdAt": "2026-01-05T18:20:00.000Z"
+      },
+      {
+        "id": "batch-fixture-marcus-01",
+        "profileId": "profile-marcus",
+        "deviceId": "device-marcus-01",
+        "sessionId": "session-marcus-01",
+        "eventCount": 10,
+        "firstEventAt": "2026-01-05T18:22:00.000Z",
+        "lastEventAt": "2026-01-05T18:40:00.000Z",
+        "manifestHash": "7eebaeed8dd48bbb6cd0a9d47105c314d2b19c1d6b7a4010e6322228608331c0",
+        "signature": "DCsZLL5igNX/5HkKNpvF8oF3WqHr2kRV73VwdZ8CbzZrmxq85Jowy9Nv2BOrFMKc8+EnueicPOTVw+hV+pa7DA==",
+        "validationStatus": "pending",
+        "createdAt": "2026-01-05T18:29:00.000Z"
+      }
+    ],
+    "contributorClaims": [
+      {
+        "id": "claim-nightwire-producer",
+        "projectId": "project-cold-nights",
+        "profileId": "profile-nightwire",
+        "role": "producer",
+        "subrole": "producer",
+        "claimedAt": "2026-01-05T18:03:00.000Z"
+      },
+      {
+        "id": "claim-nightwire-songwriter",
+        "projectId": "project-cold-nights",
+        "profileId": "profile-nightwire",
+        "role": "songwriter",
+        "subrole": "melody",
+        "claimedAt": "2026-01-05T18:04:00.000Z"
+      },
+      {
+        "id": "claim-marcus-musician",
+        "projectId": "project-cold-nights",
+        "profileId": "profile-marcus",
+        "role": "musician",
+        "subrole": "lead_guitar",
+        "claimedAt": "2026-01-05T18:05:00.000Z"
+      }
+    ],
+    "assets": [
+      {
+        "id": "asset-midi-beat",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "createdByProfileId": "profile-nightwire",
+        "introducedBySessionId": "session-nightwire-01",
+        "assetType": "midi",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_beat.mid",
+        "sha256": "e8239e22f43f99a1fbd191732589640fa016c66b896b70d508de621c0eb8f20f",
+        "firstSeenAt": "2026-01-05T18:10:00.000Z",
+        "originStatus": "declared"
+      },
+      {
+        "id": "asset-sample-pad",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "introducedBySessionId": "session-nightwire-01",
+        "assetType": "sample",
+        "sourceType": "commercial_sample_pack",
+        "originalFilename": "ambient_pad_C.wav",
+        "sha256": "5a9822857bab0482c6ae847a6dd6926b8ea7713d7c707d016c93c43ff80f8180",
+        "firstSeenAt": "2026-01-05T18:12:00.000Z",
+        "originStatus": "declared"
+      },
+      {
+        "id": "asset-stem-beat",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "createdByProfileId": "profile-nightwire",
+        "introducedBySessionId": "session-nightwire-01",
+        "assetType": "stem",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_beat_stem.wav",
+        "sha256": "9cccc2a025bd9f3d2e148225f23db233a426109a5fb0b92fce58285f8add99fc",
+        "firstSeenAt": "2026-01-05T18:16:00.000Z",
+        "originStatus": "declared"
+      },
+      {
+        "id": "asset-guitar-take",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "createdByProfileId": "profile-marcus",
+        "introducedBySessionId": "session-marcus-01",
+        "assetType": "audio",
+        "sourceType": "human_recorded",
+        "originalFilename": "guitar_lead_take.wav",
+        "sha256": "931594e1f4dd1794c1157991cafe2234fcfe66081bdd4834a58221c021c66e90",
+        "firstSeenAt": "2026-01-05T18:25:00.000Z",
+        "originStatus": "declared"
+      },
+      {
+        "id": "asset-final-mix",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "createdByProfileId": "profile-marcus",
+        "introducedBySessionId": "session-marcus-01",
+        "assetType": "mix",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_final_mix.wav",
+        "sha256": "2a671929732743e3ccd9406d5b69d3d7bd954554c9e7c2f1ee20f64b83a772b8",
+        "firstSeenAt": "2026-01-05T18:30:00.000Z",
+        "originStatus": "declared"
+      },
+      {
+        "id": "asset-final-master",
+        "projectId": "project-cold-nights",
+        "workReference": "work-cold-nights",
+        "createdByProfileId": "profile-marcus",
+        "introducedBySessionId": "session-marcus-01",
+        "assetType": "master",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_final_master.wav",
+        "sha256": "77945b72c5590a65642795ae824628587eb7089a47e6b78b7d6dd576438fbc46",
+        "firstSeenAt": "2026-01-05T18:34:00.000Z",
+        "originStatus": "declared"
+      }
+    ],
+    "trustEvaluationSnapshots": [
+      {
+        "batchId": "batch-fixture-nightwire-01",
+        "signature": {
+          "status": "valid",
+          "verification": {
+            "valid": true
+          }
+        },
+        "structure": {
+          "valid": true,
+          "checkpointChain": {
+            "valid": true,
+            "errors": []
+          },
+          "batchChain": {
+            "valid": true,
+            "errors": []
+          },
+          "errors": []
+        },
+        "deviceTrust": {
+          "deviceFound": true,
+          "currentlyTrusted": true
+        },
+        "claimStatus": "locally_sound_unverified_claim",
+        "reasons": [],
+        "capturedAt": "2026-01-07T09:00:00.000Z"
+      },
+      {
+        "batchId": "batch-fixture-marcus-01",
+        "signature": {
+          "status": "valid",
+          "verification": {
+            "valid": true
+          }
+        },
+        "structure": {
+          "valid": true,
+          "checkpointChain": {
+            "valid": true,
+            "errors": []
+          },
+          "batchChain": {
+            "valid": true,
+            "errors": []
+          },
+          "errors": []
+        },
+        "deviceTrust": {
+          "deviceFound": true,
+          "currentlyTrusted": true
+        },
+        "claimStatus": "locally_sound_unverified_claim",
+        "reasons": [],
+        "capturedAt": "2026-01-07T09:00:00.000Z"
+      }
+    ],
+    "evidenceReferenceSchemaVersion": 1,
+    "integrityManifest": {
+      "algorithm": "sha256",
+      "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
+    }
+  },
+  "dossier": {
+    "dossierVersion": 1,
+    "generatedAt": "2026-01-07T09:05:00.000Z",
+    "sourceEvidenceBundle": {
+      "exportedAt": "2026-01-07T09:00:00.000Z",
+      "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
+    },
+    "project": {
+      "projectId": "project-cold-nights",
+      "workReference": "work-cold-nights"
+    },
+    "participants": [
+      {
+        "profileId": "profile-marcus",
+        "sessionCount": 1,
+        "eventCount": 10,
+        "firstActivityAt": "2026-01-05T18:22:00.000Z",
+        "lastActivityAt": "2026-01-05T18:40:00.000Z"
+      },
+      {
+        "profileId": "profile-nightwire",
+        "sessionCount": 1,
+        "eventCount": 8,
+        "firstActivityAt": "2026-01-05T18:08:00.000Z",
+        "lastActivityAt": "2026-01-05T18:21:00.000Z"
+      }
+    ],
+    "contributorClaims": [
+      {
+        "id": "claim-nightwire-producer",
+        "profileId": "profile-nightwire",
+        "role": "producer",
+        "subrole": "producer",
+        "claimedAt": "2026-01-05T18:03:00.000Z"
+      },
+      {
+        "id": "claim-nightwire-songwriter",
+        "profileId": "profile-nightwire",
+        "role": "songwriter",
+        "subrole": "melody",
+        "claimedAt": "2026-01-05T18:04:00.000Z"
+      },
+      {
+        "id": "claim-marcus-musician",
+        "profileId": "profile-marcus",
+        "role": "musician",
+        "subrole": "lead_guitar",
+        "claimedAt": "2026-01-05T18:05:00.000Z"
+      }
+    ],
+    "assetInventory": [
+      {
+        "id": "asset-midi-beat",
+        "assetType": "midi",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_beat.mid",
+        "firstSeenAt": "2026-01-05T18:10:00.000Z",
+        "sha256Prefix": "e8239e22f43f",
+        "introducedBySessionId": "session-nightwire-01",
+        "createdByProfileId": "profile-nightwire"
+      },
+      {
+        "id": "asset-sample-pad",
+        "assetType": "sample",
+        "sourceType": "commercial_sample_pack",
+        "originalFilename": "ambient_pad_C.wav",
+        "firstSeenAt": "2026-01-05T18:12:00.000Z",
+        "sha256Prefix": "5a9822857bab",
+        "introducedBySessionId": "session-nightwire-01"
+      },
+      {
+        "id": "asset-stem-beat",
+        "assetType": "stem",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_beat_stem.wav",
+        "firstSeenAt": "2026-01-05T18:16:00.000Z",
+        "sha256Prefix": "9cccc2a025bd",
+        "introducedBySessionId": "session-nightwire-01",
+        "createdByProfileId": "profile-nightwire"
+      },
+      {
+        "id": "asset-guitar-take",
+        "assetType": "audio",
+        "sourceType": "human_recorded",
+        "originalFilename": "guitar_lead_take.wav",
+        "firstSeenAt": "2026-01-05T18:25:00.000Z",
+        "sha256Prefix": "931594e1f4dd",
+        "introducedBySessionId": "session-marcus-01",
+        "createdByProfileId": "profile-marcus"
+      },
+      {
+        "id": "asset-final-mix",
+        "assetType": "mix",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_final_mix.wav",
+        "firstSeenAt": "2026-01-05T18:30:00.000Z",
+        "sha256Prefix": "2a6719297327",
+        "introducedBySessionId": "session-marcus-01",
+        "createdByProfileId": "profile-marcus"
+      },
+      {
+        "id": "asset-final-master",
+        "assetType": "master",
+        "sourceType": "human_created",
+        "originalFilename": "cold_nights_final_master.wav",
+        "firstSeenAt": "2026-01-05T18:34:00.000Z",
+        "sha256Prefix": "77945b72c559",
+        "introducedBySessionId": "session-marcus-01",
+        "createdByProfileId": "profile-marcus"
+      }
+    ],
+    "activity": {
+      "sessionCount": 2,
+      "eventCount": 18,
+      "checkpointCount": 3,
+      "batchCount": 2,
+      "deviceCount": 2,
+      "earliestActivityAt": "2026-01-05T18:08:00.000Z",
+      "latestActivityAt": "2026-01-05T18:40:00.000Z"
+    },
+    "trust": {
+      "batchCount": 2,
+      "claimStatusCounts": {
+        "locally_sound_unverified_claim": 2
+      },
+      "allBatchesSound": true
+    },
+    "disclaimers": {
+      "unverified": [
+        "No creation-provenance, contribution, or final-use claim in this dossier has been verified by FLOW Platform or any other external authority. See trust.claimStatusCounts for this local evidence store's own trust posture only.",
+        "Device signatures and checkpoint/batch chains are evaluated against this local evidence store only; a valid local result is not proof of human identity, and does not become FLOW Platform verification by inclusion in this dossier."
+      ],
+      "notClaimed": [
+        "This dossier does not claim, compute, or imply copyright, publishing, master ownership, licensing, work-for-hire status, or any other legal rights determination — see PROVENANCE_SPEC.md §3.",
+        "This dossier does not claim that AI-generated or AI-assisted provenance was captured beyond what is explicitly present in the underlying evidence. documentationProfile (when set) is the requested documentation mode, not a record of evidence actually captured."
+      ]
+    }
+  },
+  "deliveryPackages": {
+    "collaboratorReview": {
+      "packageVersion": 1,
+      "createdAt": "2026-01-07T09:10:00.000Z",
+      "audience": "collaborator",
+      "purpose": "review",
+      "source": {
+        "evidenceBundle": {
+          "exportedAt": "2026-01-07T09:00:00.000Z",
+          "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
+        },
+        "projectDossier": {
+          "generatedAt": "2026-01-07T09:05:00.000Z",
+          "dossierVersion": 1
+        }
+      },
+      "sections": {
+        "project": {
+          "projectId": "project-cold-nights",
+          "workReference": "work-cold-nights"
+        },
+        "participants": [
+          {
+            "profileId": "profile-marcus",
+            "sessionCount": 1,
+            "eventCount": 10,
+            "firstActivityAt": "2026-01-05T18:22:00.000Z",
+            "lastActivityAt": "2026-01-05T18:40:00.000Z"
+          },
+          {
+            "profileId": "profile-nightwire",
+            "sessionCount": 1,
+            "eventCount": 8,
+            "firstActivityAt": "2026-01-05T18:08:00.000Z",
+            "lastActivityAt": "2026-01-05T18:21:00.000Z"
+          }
+        ],
+        "contributorClaims": [
+          {
+            "id": "claim-nightwire-producer",
+            "profileId": "profile-nightwire",
+            "role": "producer",
+            "subrole": "producer",
+            "claimedAt": "2026-01-05T18:03:00.000Z"
+          },
+          {
+            "id": "claim-nightwire-songwriter",
+            "profileId": "profile-nightwire",
+            "role": "songwriter",
+            "subrole": "melody",
+            "claimedAt": "2026-01-05T18:04:00.000Z"
+          },
+          {
+            "id": "claim-marcus-musician",
+            "profileId": "profile-marcus",
+            "role": "musician",
+            "subrole": "lead_guitar",
+            "claimedAt": "2026-01-05T18:05:00.000Z"
+          }
+        ],
+        "assets": [
+          {
+            "id": "asset-midi-beat",
+            "assetType": "midi",
+            "sourceType": "human_created",
+            "originalFilename": "cold_nights_beat.mid",
+            "firstSeenAt": "2026-01-05T18:10:00.000Z",
+            "sha256Prefix": "e8239e22f43f",
+            "introducedBySessionId": "session-nightwire-01",
+            "createdByProfileId": "profile-nightwire"
+          },
+          {
+            "id": "asset-sample-pad",
+            "assetType": "sample",
+            "sourceType": "commercial_sample_pack",
+            "originalFilename": "ambient_pad_C.wav",
+            "firstSeenAt": "2026-01-05T18:12:00.000Z",
+            "sha256Prefix": "5a9822857bab",
+            "introducedBySessionId": "session-nightwire-01"
+          },
+          {
+            "id": "asset-stem-beat",
+            "assetType": "stem",
+            "sourceType": "human_created",
+            "originalFilename": "cold_nights_beat_stem.wav",
+            "firstSeenAt": "2026-01-05T18:16:00.000Z",
+            "sha256Prefix": "9cccc2a025bd",
+            "introducedBySessionId": "session-nightwire-01",
+            "createdByProfileId": "profile-nightwire"
+          },
+          {
+            "id": "asset-guitar-take",
+            "assetType": "audio",
+            "sourceType": "human_recorded",
+            "originalFilename": "guitar_lead_take.wav",
+            "firstSeenAt": "2026-01-05T18:25:00.000Z",
+            "sha256Prefix": "931594e1f4dd",
+            "introducedBySessionId": "session-marcus-01",
+            "createdByProfileId": "profile-marcus"
+          },
+          {
+            "id": "asset-final-mix",
+            "assetType": "mix",
+            "sourceType": "human_created",
+            "originalFilename": "cold_nights_final_mix.wav",
+            "firstSeenAt": "2026-01-05T18:30:00.000Z",
+            "sha256Prefix": "2a6719297327",
+            "introducedBySessionId": "session-marcus-01",
+            "createdByProfileId": "profile-marcus"
+          },
+          {
+            "id": "asset-final-master",
+            "assetType": "master",
+            "sourceType": "human_created",
+            "originalFilename": "cold_nights_final_master.wav",
+            "firstSeenAt": "2026-01-05T18:34:00.000Z",
+            "sha256Prefix": "77945b72c559",
+            "introducedBySessionId": "session-marcus-01",
+            "createdByProfileId": "profile-marcus"
+          }
+        ],
+        "activity": {
+          "sessionCount": 2,
+          "eventCount": 18,
+          "checkpointCount": 3,
+          "batchCount": 2,
+          "deviceCount": 2,
+          "earliestActivityAt": "2026-01-05T18:08:00.000Z",
+          "latestActivityAt": "2026-01-05T18:40:00.000Z"
+        },
+        "trustSummary": {
+          "batchCount": 2,
+          "claimStatusCounts": {
+            "locally_sound_unverified_claim": 2
+          },
+          "allBatchesSound": true
+        },
+        "disclaimers": {
+          "unverified": [
+            "No creation-provenance, contribution, or final-use claim in this dossier has been verified by FLOW Platform or any other external authority. See trust.claimStatusCounts for this local evidence store's own trust posture only.",
+            "Device signatures and checkpoint/batch chains are evaluated against this local evidence store only; a valid local result is not proof of human identity, and does not become FLOW Platform verification by inclusion in this dossier."
+          ],
+          "notClaimed": [
+            "This dossier does not claim, compute, or imply copyright, publishing, master ownership, licensing, work-for-hire status, or any other legal rights determination — see PROVENANCE_SPEC.md §3.",
+            "This dossier does not claim that AI-generated or AI-assisted provenance was captured beyond what is explicitly present in the underlying evidence. documentationProfile (when set) is the requested documentation mode, not a record of evidence actually captured."
+          ]
+        }
+      },
+      "includedSections": [
+        "project",
+        "participants",
+        "contributorClaims",
+        "assets",
+        "activity",
+        "trustSummary",
+        "disclaimers"
+      ],
+      "omittedSections": [
+        "documentationProfile",
+        "evidenceReferences"
+      ],
+      "integrityManifest": {
+        "algorithm": "sha256",
+        "canonicalHash": "c6a8350ce02738431cbf25781df0bd21b392c70b4072bf9f1e40d6ca2631470d"
+      }
+    },
+    "labelLicensing": {
+      "packageVersion": 1,
+      "createdAt": "2026-01-07T09:10:00.000Z",
+      "audience": "label",
+      "purpose": "licensing",
+      "source": {
+        "evidenceBundle": {
+          "exportedAt": "2026-01-07T09:00:00.000Z",
+          "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
+        },
+        "projectDossier": {
+          "generatedAt": "2026-01-07T09:05:00.000Z",
+          "dossierVersion": 1
+        }
+      },
+      "sections": {
+        "project": {
+          "projectId": "project-cold-nights",
+          "workReference": "work-cold-nights"
+        },
+        "trustSummary": {
+          "batchCount": 2,
+          "claimStatusCounts": {
+            "locally_sound_unverified_claim": 2
+          },
+          "allBatchesSound": true
+        },
+        "disclaimers": {
+          "unverified": [
+            "No creation-provenance, contribution, or final-use claim in this dossier has been verified by FLOW Platform or any other external authority. See trust.claimStatusCounts for this local evidence store's own trust posture only.",
+            "Device signatures and checkpoint/batch chains are evaluated against this local evidence store only; a valid local result is not proof of human identity, and does not become FLOW Platform verification by inclusion in this dossier."
+          ],
+          "notClaimed": [
+            "This dossier does not claim, compute, or imply copyright, publishing, master ownership, licensing, work-for-hire status, or any other legal rights determination — see PROVENANCE_SPEC.md §3.",
+            "This dossier does not claim that AI-generated or AI-assisted provenance was captured beyond what is explicitly present in the underlying evidence. documentationProfile (when set) is the requested documentation mode, not a record of evidence actually captured."
+          ]
+        }
+      },
+      "includedSections": [
+        "project",
+        "trustSummary",
+        "disclaimers"
+      ],
+      "omittedSections": [
+        "participants",
+        "contributorClaims",
+        "assets",
+        "activity",
+        "documentationProfile",
+        "evidenceReferences"
+      ],
+      "integrityManifest": {
+        "algorithm": "sha256",
+        "canonicalHash": "1e3e0b160af5809696b39f7f8483916613d833079157190729873426dd47f119"
+      }
+    }
+  }
+}

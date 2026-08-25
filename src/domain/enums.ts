@@ -28,10 +28,18 @@ export type Daw = (typeof DAWS)[number];
 export const SESSION_STATUSES = ['active', 'ended', 'abandoned'] as const;
 export type SessionStatus = (typeof SESSION_STATUSES)[number];
 
-/** Origin of a canonical provenance event. Every future DAW bridge adds one value here. */
+/**
+ * Origin of a canonical provenance event. Every future DAW bridge adds one
+ * value here. `capture_studio` is the local Capture Studio service (the
+ * minimal, real Studio Companion boundary added in Capture Studio V1 —
+ * see `apps/capture-studio/service`) — distinct from `flow_companion`,
+ * which represents a future flow-platform-side companion app, not this
+ * repository's own local write path.
+ */
 export const EVENT_SOURCES = [
   'studio_simulator',
   'flow_companion',
+  'capture_studio',
   'logic_pro',
   'fl_studio',
   'ableton_live',

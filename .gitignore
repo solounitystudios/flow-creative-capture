@@ -6,3 +6,8 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Local Studio service data (SQLite evidence db + device key material) —
+# genuinely local, per-machine, never shared or committed. See
+# apps/capture-studio/service/index.ts.
+apps/capture-studio/.studio-data/

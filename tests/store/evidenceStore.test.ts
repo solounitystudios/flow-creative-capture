@@ -9,6 +9,8 @@ import {
   asContributionClaimId,
   asDeviceId,
   asEventId,
+  asExternalProjectPassportId,
+  asOrganizationId,
   asProfileId,
   asProjectId,
   asSessionId,
@@ -21,6 +23,7 @@ import { createProvenanceCheckpoint } from '../../src/domain/provenanceCheckpoin
 import { createProvenanceBatch } from '../../src/domain/provenanceBatch.js';
 import { createContributorReference } from '../../src/domain/contributorReference.js';
 import { createProjectAsset } from '../../src/domain/projectAsset.js';
+import { createCreativeProject } from '../../src/domain/creativeProject.js';
 import { createCheckpointFromManifest } from '../../src/provenance/checkpoint.js';
 import { closeEvidenceDatabase, openEvidenceDatabase } from '../../src/store/database.js';
 import { LocalEvidenceStore } from '../../src/store/evidenceStore.js';
@@ -127,6 +130,21 @@ function makeProjectAsset(
   });
 }
 
+function makeProject(
+  id = 'project-1',
+  overrides: Partial<Parameters<typeof createCreativeProject>[0]> = {},
+) {
+  return createCreativeProject({
+    id: asProjectId(id),
+    ownerProfileId: asProfileId('profile-1'),
+    title: 'Cold Nights',
+    projectType: 'song',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  });
+}
+
 function makeBatch(id = 'batch-1', sessionId = 'session-1') {
   return createProvenanceBatch({
     id: asBatchId(id),
@@ -140,6 +158,93 @@ function makeBatch(id = 'batch-1', sessionId = 'session-1') {
     createdAt: '2026-01-01T00:03:00.000Z',
   });
 }
+
+describe('LocalEvidenceStore — projects', () => {
+  it('round-trips a project with full metadata (organizationId, externalProjectPassportId)', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    const project = makeProject('project-full', {
+      organizationId: asOrganizationId('org-1'),
+      externalProjectPassportId: asExternalProjectPassportId('passport-1'),
+      status: 'active',
+    });
+    store.insertProject(project, '2026-01-01T00:00:00.000Z');
+
+    const loaded = store.getProject(project.id);
+    expect(loaded).toEqual(project);
+    store.close();
+  });
+
+  it('round-trips a project with every optional field omitted, never reconstructing them as null', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    const project = makeProject('project-bare');
+    store.insertProject(project, '2026-01-01T00:00:00.000Z');
+
+    const loaded = store.getProject(project.id);
+    expect(loaded).toEqual(project);
+    expect('organizationId' in (loaded ?? {})).toBe(false);
+    expect('externalProjectPassportId' in (loaded ?? {})).toBe(false);
+    store.close();
+  });
+
+  it('returns undefined for a project that was never inserted', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    expect(store.getProject(asProjectId('nope'))).toBeUndefined();
+    store.close();
+  });
+
+  it('duplicate insertion of the exact same project is an idempotent no-op', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    const project = makeProject();
+    const first = store.insertProject(project, '2026-01-01T00:00:00.000Z');
+    const second = store.insertProject(project, '2026-01-01T00:00:00.000Z');
+    expect(first).toEqual({ inserted: true });
+    expect(second).toEqual({ inserted: false, reason: 'duplicate' });
+    store.close();
+  });
+
+  it('a conflicting project (same id, different content) throws and never overwrites the original', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    const original = makeProject('project-x', { title: 'Cold Nights' });
+    store.insertProject(original, '2026-01-01T00:00:00.000Z');
+
+    const conflicting = makeProject('project-x', { title: 'Cold Nights (renamed)' });
+    expect(() => store.insertProject(conflicting, '2026-01-01T00:00:00.000Z')).toThrow(StoreConflictError);
+    expect(store.getProject(asProjectId('project-x'))?.title).toBe('Cold Nights');
+    store.close();
+  });
+
+  it('lists projects ordered by createdAt (rowid as tiebreaker)', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    const first = makeProject('project-first', { title: 'First', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' });
+    const second = makeProject('project-second', { title: 'Second', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' });
+
+    // Inserted out of chronological order on purpose.
+    store.insertProject(second, '2026-01-02T00:05:00.000Z');
+    store.insertProject(first, '2026-01-01T00:05:00.000Z');
+
+    expect(store.listProjects().map((p) => p.id)).toEqual(['project-first', 'project-second']);
+    store.close();
+  });
+
+  it('returns an empty list when no projects exist', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    expect(store.listProjects()).toEqual([]);
+    store.close();
+  });
+
+  it('a project survives a store close/reopen at the same path', () => {
+    const path = makeDbPath();
+    const first = new LocalEvidenceStore(path);
+    const project = makeProject('project-durable');
+    first.insertProject(project, '2026-01-01T00:00:00.000Z');
+    first.close();
+
+    const second = new LocalEvidenceStore(path);
+    expect(second.getProject(project.id)).toEqual(project);
+    expect(second.listProjects().map((p) => p.id)).toEqual(['project-durable']);
+    second.close();
+  });
+});
 
 describe('LocalEvidenceStore — devices', () => {
   it('round-trips a device, including its public key', () => {
@@ -756,6 +861,18 @@ describe('LocalEvidenceStore — append-only enforcement (direct SQL against the
     const raw = reopenRaw(path);
     expect(() => raw.exec("UPDATE project_assets SET originalFilename = 'renamed.wav'")).toThrow(/append-only/);
     expect(() => raw.exec('DELETE FROM project_assets')).toThrow(/append-only/);
+    closeEvidenceDatabase(raw);
+  });
+
+  it('blocks UPDATE and DELETE on projects — a persisted project record cannot be mutated or removed by rewriting the row', () => {
+    const path = makeDbPath();
+    const store = new LocalEvidenceStore(path);
+    store.insertProject(makeProject(), '2026-01-01T00:00:00.000Z');
+    store.close();
+
+    const raw = reopenRaw(path);
+    expect(() => raw.exec("UPDATE projects SET title = 'renamed'")).toThrow(/append-only/);
+    expect(() => raw.exec('DELETE FROM projects')).toThrow(/append-only/);
     closeEvidenceDatabase(raw);
   });
 
