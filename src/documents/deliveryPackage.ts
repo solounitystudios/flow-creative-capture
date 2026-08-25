@@ -4,6 +4,7 @@ import type { DocumentationProfile, EvidenceBundleExport, EvidenceBundleProject 
 import { DocumentAssemblyError } from './errors.js';
 import type {
   DossierActivity,
+  DossierAsset,
   DossierContributionClaim,
   DossierDisclaimers,
   DossierParticipant,
@@ -28,6 +29,14 @@ import type {
  * contribution-claim data at all, and the reverse holds too. Both remain
  * exactly what `ProjectDossier` already labeled them: self-reported
  * claims, not verified credit, ownership, or rights.
+ *
+ * `assets` is a fourth, equally independent selectable section — the
+ * dossier's `assetInventory`, included only when explicitly requested.
+ * This describes what assets exist (metadata/fingerprints only, never
+ * raw media bytes — see `DossierAsset`); it does not transport any file.
+ * A recipient requesting `assets` without `contributorClaims` gets asset
+ * metadata with no claim data, and the reverse holds too — this module
+ * never infers one from the other.
  *
  * PRIVACY BY DEFAULT: sections summarize, they do not carry raw evidence.
  * `evidenceReferences` exposes only `{kind, id, at}` per record — never a
@@ -78,6 +87,7 @@ export const DELIVERY_PACKAGE_SECTION_KEYS = [
   'project',
   'participants',
   'contributorClaims',
+  'assets',
   'activity',
   'trustSummary',
   'documentationProfile',
@@ -103,6 +113,7 @@ export interface DeliveryPackageSections {
   readonly project?: EvidenceBundleProject;
   readonly participants?: readonly DossierParticipant[];
   readonly contributorClaims?: readonly DossierContributionClaim[];
+  readonly assets?: readonly DossierAsset[];
   readonly activity?: DossierActivity;
   readonly trustSummary?: DossierTrustSummary;
   readonly documentationProfile?: DocumentationProfile;
@@ -209,6 +220,9 @@ export function buildDeliveryPackage(
   }
   if (requested.has('contributorClaims')) {
     sections.contributorClaims = dossier.contributorClaims;
+  }
+  if (requested.has('assets')) {
+    sections.assets = dossier.assetInventory;
   }
   if (requested.has('activity')) {
     sections.activity = dossier.activity;

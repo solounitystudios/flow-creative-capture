@@ -7,6 +7,7 @@ import type { ProvenanceEvent } from '../domain/provenanceEvent.js';
 import type { ProvenanceCheckpoint } from '../domain/provenanceCheckpoint.js';
 import type { ProvenanceBatch } from '../domain/provenanceBatch.js';
 import type { ContributorReference } from '../domain/contributorReference.js';
+import type { ProjectAsset } from '../domain/projectAsset.js';
 import { evaluateStoredBatchTrust, type BatchTrustEvaluation } from '../trust/batchTrust.js';
 import type { LocalEvidenceStore } from '../store/evidenceStore.js';
 import { EvidenceBundleAssemblyError } from './errors.js';
@@ -125,6 +126,17 @@ export interface EvidenceBundleIntegrityManifest {
  * copyright/publishing/master ownership, not a royalty/split
  * determination, not a contract.
  */
+/**
+ * Durable metadata about known creative artifacts (files, in effect) for
+ * this project — exactly `store.listProjectAssetsForProject(project.id)`,
+ * never a derivation from `sessions`/`events`/`contributorClaims`. Raw
+ * media bytes never appear here or anywhere in this store — only
+ * metadata and fingerprints (`sha256`), per ARCHITECTURE.md's privacy
+ * principles. `ProjectAsset.createdByProfileId`, when present, is NOT a
+ * `ContributorReference` and is never treated as one anywhere in this
+ * module — see `src/domain/projectAsset.ts`'s own docstring for that
+ * field's exact, deliberately narrow meaning.
+ */
 export interface EvidenceBundleExport {
   readonly manifestVersion: 1;
   readonly exportedAt: string;
@@ -135,6 +147,7 @@ export interface EvidenceBundleExport {
   readonly checkpoints: readonly ProvenanceCheckpoint[];
   readonly batches: readonly ProvenanceBatch[];
   readonly contributorClaims: readonly ContributorReference[];
+  readonly assets: readonly ProjectAsset[];
   readonly trustEvaluationSnapshots: readonly TrustEvaluationSnapshot[];
   readonly documentation?: EvidenceBundleDocumentationEnvelope;
   readonly evidenceReferenceSchemaVersion: 1;
@@ -177,6 +190,10 @@ const compareEvents = compareByFieldThenId<ProvenanceEvent>(
 const compareBatches = compareByFieldThenId<ProvenanceBatch>(
   (b) => b.createdAt,
   (b) => b.id,
+);
+const compareAssets = compareByFieldThenId<ProjectAsset>(
+  (a) => a.firstSeenAt,
+  (a) => a.id,
 );
 
 /**
@@ -304,6 +321,12 @@ export function assembleEvidenceBundle(store: LocalEvidenceStore, options: Assem
   // above. A project with zero explicitly-inserted claims exports [].
   const contributorClaims = [...store.listContributorReferencesForProject(options.projectId)];
 
+  // Re-sorted here defensively (same pattern as sessions/events/batches
+  // above) rather than trusting the store's own order as final. Never
+  // inferred from sessions/events — an asset exists in this array only
+  // because it was explicitly persisted via insertProjectAsset.
+  const assets = [...store.listProjectAssetsForProject(options.projectId)].sort(compareAssets);
+
   const devices = collectDeviceIds(sessions, events, batches).map((deviceId) =>
     resolveEvidenceBundleDevice(store, deviceId),
   );
@@ -344,6 +367,7 @@ export function assembleEvidenceBundle(store: LocalEvidenceStore, options: Assem
     checkpoints,
     batches,
     contributorClaims,
+    assets,
     trustEvaluationSnapshots,
     ...(documentation !== undefined ? { documentation } : {}),
     evidenceReferenceSchemaVersion: 1 as const,

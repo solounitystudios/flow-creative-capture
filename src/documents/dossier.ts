@@ -1,4 +1,5 @@
-import type { ContributionClaimId, ProfileId } from '../domain/ids.js';
+import type { AssetId, ContributionClaimId, ProfileId, SessionId } from '../domain/ids.js';
+import type { AssetType, SourceType } from '../domain/enums.js';
 import type { ContributionRole } from '../domain/roles.js';
 import type { ClaimStatus } from '../trust/batchTrust.js';
 import type {
@@ -33,6 +34,15 @@ import type {
  * arrays — see `DossierContributionClaim` below. Neither is derived from
  * the other: recording activity never manufactures a claim, and a claim
  * never requires matching activity to appear.
+ *
+ * `assetInventory` is a THIRD, equally separate section built only from
+ * `bundle.assets` — see `DossierAsset` below. An asset's
+ * `createdByProfileId`, when present, is presented as-is and is NEVER
+ * read as, or used to manufacture, a `DossierContributionClaim`: knowing
+ * who introduced a file is not the same fact as someone claiming a
+ * creative role, and this module never conflates the two. No lineage
+ * (`AssetRelationship` is domain-only, not yet persisted — see
+ * `src/store/schema.ts`) and no rights/ownership field appears here.
  */
 
 /**
@@ -85,6 +95,30 @@ export interface DossierContributionClaim {
   readonly claimedAt: string;
 }
 
+/**
+ * One known creative artifact, presented for human reading. Built only
+ * from `bundle.assets` (never `bundle.sessions`/`bundle.events`, same
+ * isolation `buildContributionClaims` already applies) — activity data
+ * cannot manufacture or alter an asset record. `sha256Prefix` is a
+ * truncated, skimmable fingerprint (the first 12 hex characters of the
+ * full digest) for a human-readable summary; a recipient needing the
+ * full digest to independently re-verify content goes to the underlying
+ * `EvidenceBundleExport.assets` record itself. `createdByProfileId` is
+ * carried through exactly as `ProjectAsset` documents it — see that
+ * type's own docstring — and is never treated as a contribution claim,
+ * credit, or authorship determination here.
+ */
+export interface DossierAsset {
+  readonly id: AssetId;
+  readonly assetType: AssetType;
+  readonly sourceType: SourceType;
+  readonly originalFilename?: string;
+  readonly firstSeenAt: string;
+  readonly sha256Prefix: string;
+  readonly introducedBySessionId: SessionId;
+  readonly createdByProfileId?: ProfileId;
+}
+
 export interface DossierActivity {
   readonly sessionCount: number;
   readonly eventCount: number;
@@ -122,6 +156,7 @@ export interface ProjectDossier {
   readonly documentationProfile?: DocumentationProfile;
   readonly participants: readonly DossierParticipant[];
   readonly contributorClaims: readonly DossierContributionClaim[];
+  readonly assetInventory: readonly DossierAsset[];
   readonly activity: DossierActivity;
   readonly trust: DossierTrustSummary;
   readonly disclaimers: DossierDisclaimers;
@@ -198,6 +233,32 @@ function buildContributionClaims(bundle: EvidenceBundleExport): DossierContribut
     .sort((a, b) => (a.claimedAt !== b.claimedAt ? (a.claimedAt < b.claimedAt ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
+const SHA256_PREFIX_LENGTH = 12;
+
+/**
+ * Presents `bundle.assets` for human reading, re-sorted here (firstSeenAt,
+ * then id as a deterministic tiebreaker) rather than trusting the
+ * bundle's own ordering — the same defensive-determinism pattern
+ * `buildContributionClaims`/`buildParticipants` already use. Never reads
+ * `bundle.sessions`/`bundle.events`/`bundle.contributorClaims` — activity
+ * and claim data cannot manufacture or alter an asset record, and an
+ * asset record never manufactures a claim.
+ */
+function buildAssetInventory(bundle: EvidenceBundleExport): DossierAsset[] {
+  return [...bundle.assets]
+    .map((asset) => ({
+      id: asset.id,
+      assetType: asset.assetType,
+      sourceType: asset.sourceType,
+      ...(asset.originalFilename !== undefined ? { originalFilename: asset.originalFilename } : {}),
+      firstSeenAt: asset.firstSeenAt,
+      sha256Prefix: asset.sha256.slice(0, SHA256_PREFIX_LENGTH),
+      introducedBySessionId: asset.introducedBySessionId,
+      ...(asset.createdByProfileId !== undefined ? { createdByProfileId: asset.createdByProfileId } : {}),
+    }))
+    .sort((a, b) => (a.firstSeenAt !== b.firstSeenAt ? (a.firstSeenAt < b.firstSeenAt ? -1 : 1) : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 function buildActivity(bundle: EvidenceBundleExport): DossierActivity {
   const timestamps: string[] = [];
   for (const session of bundle.sessions) {
@@ -257,6 +318,7 @@ export function buildProjectDossier(bundle: EvidenceBundleExport, options: Build
     ...(bundle.documentation?.profile !== undefined ? { documentationProfile: bundle.documentation.profile } : {}),
     participants: buildParticipants(bundle),
     contributorClaims: buildContributionClaims(bundle),
+    assetInventory: buildAssetInventory(bundle),
     activity: buildActivity(bundle),
     trust: buildTrustSummary(bundle),
     disclaimers: {

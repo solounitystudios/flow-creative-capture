@@ -1,5 +1,5 @@
 /**
- * Local Evidence Store — schema version 2.
+ * Local Evidence Store — schema version 3.
  *
  * V1 (the Local Evidence Store V1 batch) persisted exactly the objects
  * needed to reconstruct and independently re-verify locally captured
@@ -21,31 +21,46 @@
  * derives a contribution claim from session/event/device activity — see
  * that module's docstring.
  *
+ * V3 (the ProjectAsset Persistence batch) adds exactly one new table,
+ * `project_assets`: durable metadata about actual creative artifacts
+ * (files, in effect) — see `src/domain/projectAsset.ts`. Same posture as
+ * every other fact table: metadata and fingerprints only, never raw media
+ * bytes (see ARCHITECTURE.md's privacy principles). `createdByProfileId`
+ * is persisted as-is and remains a narrow, non-authoritative field (see
+ * that domain type's own docstring) — it is never read by this store (or
+ * by `src/evidence`/`src/documents`) as a `ContributorReference`, and
+ * nothing here derives, infers, or auto-generates one from it.
+ * `AssetRelationship` and `ReleaseCandidate` remain domain-only,
+ * deliberately out of scope for this version — they are not required to
+ * persist a single asset's own metadata, same "don't build ahead of an
+ * actual need" reasoning V1 already applied to this table itself.
+ *
  * **Backward compatibility.** This store has no migration engine (see
  * `database.ts`'s `UnsupportedSchemaVersionError` — an existing database
  * with a different schema version is always rejected outright, never
  * silently migrated or reinterpreted). Bumping `CURRENT_SCHEMA_VERSION`
- * from 1 to 2 for this table addition is therefore not optional: a V1
- * database is missing `contributor_references` entirely, so opening it
- * under V2 code without a version bump would let it look "compatible"
- * (same version number) while actually being structurally different —
- * exactly the silent-mismatch failure mode this store's version check
- * exists to prevent. With the bump, a V1 database is safely rejected with
- * `UnsupportedSchemaVersionError` and left completely untouched, exactly
- * like any other unsupported version — see
- * `tests/store/database.test.ts`'s "rejects a pre-Contributor-Claims
- * (schema version 1) database safely" for the regression proof.
+ * from 2 to 3 for this table addition is therefore not optional, for the
+ * exact same reason the 1-to-2 bump was not optional: a V2 database is
+ * missing `project_assets` entirely, so opening it under V3 code without a
+ * version bump would let it look "compatible" (same version number) while
+ * actually being structurally different — exactly the silent-mismatch
+ * failure mode this store's version check exists to prevent. With the
+ * bump, a V2 database is safely rejected with `UnsupportedSchemaVersionError`
+ * and left completely untouched, exactly like any other unsupported
+ * version — see `tests/store/database.test.ts`'s "rejects a
+ * pre-ProjectAsset (schema version 2) database safely" for the regression
+ * proof.
  *
  * ## Table shapes
  *
  * IMMUTABLE FACT tables (`devices`, `device_revocations`, `sessions`,
- * `session_ends`, `events`, `checkpoints`, `batches`, `contributor_references`)
- * have a PRIMARY KEY on the domain id (or, for the two "_ends"/"_revocations"
- * side tables, on the id of the fact they attach to) and are written at
- * most once per key. `UPDATE`/`DELETE` are forbidden on all of them via
- * triggers — this is the append-only invariant enforced at the storage
- * engine level, per PROVENANCE_SPEC.md §10, not just by application
- * convention.
+ * `session_ends`, `events`, `checkpoints`, `batches`, `contributor_references`,
+ * `project_assets`) have a PRIMARY KEY on the domain id (or, for the two
+ * "_ends"/"_revocations" side tables, on the id of the fact they attach
+ * to) and are written at most once per key. `UPDATE`/`DELETE` are
+ * forbidden on all of them via triggers — this is the append-only
+ * invariant enforced at the storage engine level, per PROVENANCE_SPEC.md
+ * §10, not just by application convention.
  *
  * `device_revocations` and `session_ends` are split out from `devices` and
  * `sessions` rather than modeled as columns on those tables, because they
@@ -87,9 +102,9 @@
  * proving this.
  */
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
-export const SCHEMA_V2_DDL = `
+export const SCHEMA_V3_DDL = `
 CREATE TABLE schema_version (
   version INTEGER NOT NULL
 );
@@ -151,6 +166,7 @@ CREATE TABLE events (
 );
 CREATE INDEX idx_events_session ON events(sessionId);
 CREATE INDEX idx_events_project ON events(projectId);
+CREATE INDEX idx_events_asset ON events(assetId);
 
 CREATE TABLE checkpoints (
   id TEXT PRIMARY KEY,
@@ -204,6 +220,25 @@ CREATE TABLE contributor_references (
 );
 CREATE INDEX idx_contributor_references_project ON contributor_references(projectId);
 
+CREATE TABLE project_assets (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  workReference TEXT,
+  createdByProfileId TEXT,
+  introducedBySessionId TEXT NOT NULL REFERENCES sessions(id),
+  assetType TEXT NOT NULL,
+  sourceType TEXT NOT NULL,
+  originalFilename TEXT,
+  sha256 TEXT NOT NULL,
+  sizeBytes INTEGER,
+  firstSeenAt TEXT NOT NULL,
+  originStatus TEXT NOT NULL,
+  rightsStatus TEXT,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_project_assets_project ON project_assets(projectId);
+CREATE INDEX idx_project_assets_sha256 ON project_assets(sha256);
+
 CREATE TRIGGER trg_devices_no_update BEFORE UPDATE ON devices BEGIN SELECT RAISE(ABORT, 'devices is append-only: rows cannot be updated'); END;
 CREATE TRIGGER trg_devices_no_delete BEFORE DELETE ON devices BEGIN SELECT RAISE(ABORT, 'devices is append-only: rows cannot be deleted'); END;
 
@@ -227,4 +262,7 @@ CREATE TRIGGER trg_batches_no_delete BEFORE DELETE ON batches BEGIN SELECT RAISE
 
 CREATE TRIGGER trg_contributor_references_no_update BEFORE UPDATE ON contributor_references BEGIN SELECT RAISE(ABORT, 'contributor_references is append-only: rows cannot be updated'); END;
 CREATE TRIGGER trg_contributor_references_no_delete BEFORE DELETE ON contributor_references BEGIN SELECT RAISE(ABORT, 'contributor_references is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_project_assets_no_update BEFORE UPDATE ON project_assets BEGIN SELECT RAISE(ABORT, 'project_assets is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_project_assets_no_delete BEFORE DELETE ON project_assets BEGIN SELECT RAISE(ABORT, 'project_assets is append-only: rows cannot be deleted'); END;
 `;

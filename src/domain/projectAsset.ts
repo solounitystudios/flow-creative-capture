@@ -10,10 +10,40 @@ import {
 } from './enums.js';
 import type { RightsVerificationStatus } from './enums.js';
 
+/**
+ * A single piece of actual creative material (a file, in effect) known to
+ * exist in a project — immutable factual metadata about it, never a file
+ * manager. See `createProjectAsset` and each field below for exact V1
+ * semantics; nothing here is or implies a `ContributorReference`
+ * (`src/domain/contributorReference.ts`), a verified credit, or a
+ * rights/ownership determination — see PROVENANCE_SPEC.md §3.
+ */
 export interface ProjectAsset {
   readonly id: AssetId;
   readonly projectId: ProjectId;
   readonly workReference?: WorkReferenceId;
+  /**
+   * V1 SEMANTICS, DELIBERATELY NARROW: the profile the caller is recording
+   * as the source of THIS SPECIFIC FILE — e.g. who rendered/exported it,
+   * or whose take it is. It is NOT, and must never be read as:
+   *  - a performer/songwriter/producer credit,
+   *  - proof of authorship,
+   *  - a `ContributorReference` (a project-level, self-reported ROLE
+   *    claim — see `src/domain/contributorReference.ts` — which is a
+   *    wholly separate record a caller must construct on its own; this
+   *    field never auto-generates or implies one),
+   *  - legal ownership or copyright.
+   * It commonly equals `introducedBySessionId`'s own `actorProfileId`
+   * (the person operating Capture for that session also produced the
+   * file), but the two are independent fields on purpose: an engineer
+   * running a session can press Record for someone else's performance, or
+   * introduce/import an asset nobody in this profile's chain actually
+   * created (e.g. a purchased sample — see `sourceType`), so this field is
+   * optional and may legitimately be omitted, or may name someone other
+   * than the session's own actor, without that being an error. Left
+   * unset, no default or inference is applied — omission is a true "not
+   * recorded," not "unknown."
+   */
   readonly createdByProfileId?: ProfileId;
   readonly introducedBySessionId: SessionId;
   readonly assetType: AssetType;

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { BatchId, CheckpointId, ContributionClaimId, DeviceId, EventId, ProjectId, SessionId } from '../domain/ids.js';
+import type { AssetId, BatchId, CheckpointId, ContributionClaimId, DeviceId, EventId, ProjectId, SessionId } from '../domain/ids.js';
 import type { BatchValidationStatus } from '../domain/enums.js';
 import type { StudioDevice } from '../domain/studioDevice.js';
 import type { StudioSession } from '../domain/studioSession.js';
@@ -7,6 +7,7 @@ import type { ProvenanceEvent } from '../domain/provenanceEvent.js';
 import type { ProvenanceCheckpoint } from '../domain/provenanceCheckpoint.js';
 import type { ProvenanceBatch } from '../domain/provenanceBatch.js';
 import type { ContributorReference } from '../domain/contributorReference.js';
+import type { ProjectAsset } from '../domain/projectAsset.js';
 import { validateCheckpointChain, type CheckpointChainValidationResult } from '../provenance/checkpoint.js';
 import { verifySignedBatch, type BatchVerificationResult } from '../device/batchSigning.js';
 import { closeEvidenceDatabase, isUniqueConstraintError, openEvidenceDatabase, withTransaction } from './database.js';
@@ -18,12 +19,14 @@ import {
   contributorReferenceToRow,
   deviceToRow,
   eventToRow,
+  projectAssetToRow,
   rowToBatch,
   rowToCheckpoint,
   rowToContributorReference,
   rowToDevice,
   rowToDevicePublicKeySpkiDer,
   rowToEvent,
+  rowToProjectAsset,
   rowToSession,
   sessionToRow,
   type BatchRow,
@@ -33,6 +36,7 @@ import {
   type DeviceRevocationRow,
   type DeviceRow,
   type EventRow,
+  type ProjectAssetRow,
   type SessionEndRow,
   type SessionRow,
 } from './rows.js';
@@ -59,14 +63,15 @@ function rowsEqual(a: Record<string, SqlPrimitive>, b: Record<string, SqlPrimiti
 }
 
 /**
- * Local Evidence Store (schema version 2).
+ * Local Evidence Store (schema version 3).
  *
  * Persists exactly what is needed to reconstruct and independently
  * re-verify locally captured evidence: devices, sessions, provenance
  * events, checkpoints, and signed provenance batches — plus, since schema
- * version 2, explicit contribution claims (`contributor_references`; see
- * schema.ts for the full table rationale and the version-bump/backward-
- * compatibility note). This class is a thin, intentional API over
+ * version 2, explicit contribution claims (`contributor_references`), and
+ * since schema version 3, durable project asset metadata
+ * (`project_assets`; see schema.ts for the full table rationale and the
+ * version-bump/backward-compatibility note). This class is a thin, intentional API over
  * `node:sqlite` — it does not expose raw SQL, a query builder, or the
  * underlying `DatabaseSync` handle to callers.
  *
@@ -400,6 +405,41 @@ export class LocalEvidenceStore {
       .prepare('SELECT * FROM contributor_references WHERE projectId = ? ORDER BY claimedAt ASC, rowid ASC')
       .all(projectId) as unknown as ContributorReferenceRow[];
     return rows.map(rowToContributorReference);
+  }
+
+  // ---- Project Assets ---------------------------------------------------------
+
+  /**
+   * Persists metadata about a known creative artifact — never raw media
+   * bytes (see ARCHITECTURE.md's privacy principles; this table stores
+   * fingerprints and structural metadata only, exactly like every other
+   * fact table). `asset.createdByProfileId` is persisted as-is and is
+   * never read by this method (or by anything downstream) as a
+   * `ContributorReference` — see `src/domain/projectAsset.ts`'s own
+   * docstring for that field's exact, deliberately narrow meaning. This
+   * store never derives a `ProjectAsset` from session/event activity on a
+   * caller's behalf, same posture as `insertContributorReference`.
+   */
+  insertProjectAsset(asset: ProjectAsset, storedAt: string): InsertResult {
+    return this.insertFactRow('project_assets', 'id', projectAssetToRow(asset, storedAt) as unknown as Record<
+      string,
+      SqlPrimitive
+    >);
+  }
+
+  getProjectAsset(id: AssetId): ProjectAsset | undefined {
+    const row = this.db.prepare('SELECT * FROM project_assets WHERE id = ?').get(id) as
+      | ProjectAssetRow
+      | undefined;
+    return row === undefined ? undefined : rowToProjectAsset(row);
+  }
+
+  /** Ordered by firstSeenAt, rowid as a deterministic tiebreaker — same rule as every other project-scoped list method (sessions/events/batches/contributor_references). */
+  listProjectAssetsForProject(projectId: ProjectId): ProjectAsset[] {
+    const rows = this.db
+      .prepare('SELECT * FROM project_assets WHERE projectId = ? ORDER BY firstSeenAt ASC, rowid ASC')
+      .all(projectId) as unknown as ProjectAssetRow[];
+    return rows.map(rowToProjectAsset);
   }
 
   // ---- Atomic multi-record evidence assembly -------------------------------

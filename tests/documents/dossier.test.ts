@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { asBatchId, asContributionClaimId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
+import { asAssetId, asBatchId, asContributionClaimId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
 import { createDeviceIdentity } from '../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../src/device/keyStore.js';
 import { signProvenanceBatch } from '../../src/device/batchSigning.js';
@@ -11,6 +11,7 @@ import { createStudioDevice } from '../../src/domain/studioDevice.js';
 import { createStudioSession } from '../../src/domain/studioSession.js';
 import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
 import { createContributorReference } from '../../src/domain/contributorReference.js';
+import { createProjectAsset } from '../../src/domain/projectAsset.js';
 import { LocalEvidenceStore } from '../../src/store/evidenceStore.js';
 import { runColdNightsScenario } from '../../src/simulator/coldNights.js';
 import { assembleEvidenceBundle, type EvidenceBundleExport } from '../../src/evidence/bundle.js';
@@ -275,6 +276,101 @@ describe('buildProjectDossier — activity participants vs. contribution claims 
       },
     ]);
     expect(dossier.participants.some((p) => p.profileId === claimOnlyProfileId)).toBe(false);
+  });
+});
+
+describe('buildProjectDossier — asset inventory stays separate from participants and contribution claims', () => {
+  it('presents bundle.assets as its own section; createdByProfileId never manufactures a contributor claim or a participant entry', () => {
+    const projectId = asProjectId('project-dossier-asset-separation');
+    const engineerProfileId = asProfileId('profile-engineer-operator');
+    const deviceId = asDeviceId('device-dossier-asset-separation-01');
+    const sessionId = asSessionId('session-dossier-asset-separation-01');
+
+    const store = new LocalEvidenceStore(join(makeTempDir('flow-dossier-asset-separation-db-'), 'evidence.db'));
+    store.insertDevice(
+      createStudioDevice({
+        id: deviceId,
+        profileId: engineerProfileId,
+        devicePublicId: 'pub-dossier-asset-separation',
+        platform: 'macos',
+        appVersion: '1.0.0',
+        deviceKeyFingerprint: 'a'.repeat(64),
+      }),
+      Buffer.from('not-a-real-key'),
+      '2026-01-01T00:00:00.000Z',
+    );
+    store.insertSession(
+      createStudioSession({
+        id: sessionId,
+        projectId,
+        actorProfileId: engineerProfileId,
+        deviceId,
+        daw: 'logic_pro',
+        startedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      '2026-01-01T00:00:00.000Z',
+    );
+
+    // The engineer's session introduced this file — createdByProfileId is
+    // set (the engineer pressed Record), but NOBODY has claimed a
+    // creative role for this project at all: zero ContributorReferences
+    // exist in this store.
+    const asset = createProjectAsset({
+      id: asAssetId('asset-dossier-asset-separation-01'),
+      projectId,
+      createdByProfileId: engineerProfileId,
+      introducedBySessionId: sessionId,
+      assetType: 'audio',
+      sourceType: 'human_recorded',
+      originalFilename: 'session_capture.wav',
+      sha256: '9'.repeat(64),
+      firstSeenAt: '2026-01-01T00:04:00.000Z',
+    });
+    store.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+    store.close();
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+
+    expect(dossier.assetInventory).toEqual([
+      {
+        id: asset.id,
+        assetType: 'audio',
+        sourceType: 'human_recorded',
+        originalFilename: 'session_capture.wav',
+        firstSeenAt: asset.firstSeenAt,
+        sha256Prefix: '9'.repeat(12),
+        introducedBySessionId: sessionId,
+        createdByProfileId: engineerProfileId,
+      },
+    ]);
+
+    // createdByProfileId never manufactures a contributor claim — this
+    // store never called insertContributorReference, and the dossier
+    // must reflect that truthfully regardless of who introduced the file.
+    expect(dossier.contributorClaims).toEqual([]);
+
+    // The engineer DOES show up in participants (they ran the session and
+    // recorded activity) — that is activity attribution, a separate fact
+    // from asset introduction, and both can legitimately be true at once
+    // without one implying the other.
+    expect(dossier.participants.map((p) => p.profileId)).toEqual([engineerProfileId]);
+  });
+
+  it('never introduces a lineage or rights field on an asset inventory entry', () => {
+    const bundle = buildColdNightsBundle(join(makeTempDir('flow-dossier-asset-no-lineage-'), 'evidence.db'));
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+    const serialized = JSON.stringify(dossier.assetInventory);
+
+    expect(serialized).not.toMatch(/"(rightsStatus|ownership|verified|lineage|relationship|derivedFrom)":/i);
+  });
+
+  it('is empty for a project with zero persisted assets, without affecting other sections', () => {
+    const bundle = buildColdNightsBundle(join(makeTempDir('flow-dossier-asset-empty-'), 'evidence.db'));
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+
+    expect(dossier.assetInventory).toEqual([]);
+    expect(dossier.participants.length).toBeGreaterThan(0);
   });
 });
 
