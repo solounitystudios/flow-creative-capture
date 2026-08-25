@@ -47,6 +47,17 @@ describe('createProjectAsset', () => {
     expect(() => createProjectAsset({ ...baseInput(), sizeBytes: -1 })).toThrow();
   });
 
+  it('rejects an unrecognized rightsStatus', () => {
+    expect(() =>
+      createProjectAsset({ ...baseInput(), rightsStatus: 'made_up' as unknown as 'claimed' }),
+    ).toThrow();
+  });
+
+  it('accepts a valid, explicitly-provided rightsStatus', () => {
+    const asset = createProjectAsset({ ...baseInput(), rightsStatus: 'claimed' });
+    expect(asset.rightsStatus).toBe('claimed');
+  });
+
   it('lowercases the stored sha256', () => {
     const upper = hashString('fixture-audio').toUpperCase();
     const asset = createProjectAsset({ ...baseInput(), sha256: upper });

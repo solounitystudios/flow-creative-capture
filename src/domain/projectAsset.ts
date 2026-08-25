@@ -3,12 +3,13 @@ import { isSha256Hex } from '../crypto/sha256.js';
 import {
   ASSET_TYPES,
   ORIGIN_STATUSES,
+  RIGHTS_VERIFICATION_STATUSES,
   SOURCE_TYPES,
   type AssetType,
   type OriginStatus,
+  type RightsVerificationStatus,
   type SourceType,
 } from './enums.js';
-import type { RightsVerificationStatus } from './enums.js';
 
 /**
  * A single piece of actual creative material (a file, in effect) known to
@@ -88,6 +89,14 @@ export function createProjectAsset(input: ProjectAssetInput): ProjectAsset {
   const originStatus = input.originStatus ?? 'declared';
   if (!ORIGIN_STATUSES.includes(originStatus)) {
     throw new Error(`ProjectAsset.originStatus "${originStatus}" is not recognized`);
+  }
+  // rightsStatus is genuinely optional and never defaulted (PROVENANCE_SPEC.md
+  // §3 — never inferred, only ever set by an explicit caller), unlike
+  // originStatus above; but when a caller does supply one, it is validated
+  // against the same controlled vocabulary RightsClaimReference.verificationStatus
+  // already validates, rather than accepted as an arbitrary string.
+  if (input.rightsStatus !== undefined && !RIGHTS_VERIFICATION_STATUSES.includes(input.rightsStatus)) {
+    throw new Error(`ProjectAsset.rightsStatus "${input.rightsStatus}" is not recognized`);
   }
 
   return Object.freeze({
