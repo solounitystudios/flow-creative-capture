@@ -894,3 +894,34 @@ a {
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   }
 }
+
+/* ---------------------------------------------------------------------- */
+/* Live Studio (Capture Studio V1 write path)                            */
+/* ---------------------------------------------------------------------- */
+.mode-toggle {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--surface-border);
+  background: var(--surface-1);
+}
+
+.mode-toggle .btn[aria-pressed='true'] {
+  background: var(--accent-muted);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.text-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--surface-border);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.text-input:focus-visible {
+  border-color: var(--accent);
+}

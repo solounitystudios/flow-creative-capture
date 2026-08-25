@@ -31,8 +31,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runColdNightsScenario } from '../../../src/simulator/coldNights.js';
-import { createDeviceIdentity } from '../../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../../src/device/keyStore.js';
+import { loadDeterministicFixtureIdentity } from './fixtureDeviceKeys.js';
 import { signProvenanceBatch } from '../../../src/device/batchSigning.js';
 import { createBatchFromEvents } from '../../../src/provenance/batch.js';
 import { asBatchId } from '../../../src/domain/ids.js';
@@ -53,18 +53,15 @@ function main() {
   const keyStore = new FileDeviceKeyStore(join(workDir, 'keys'));
   const dbPath = join(workDir, 'evidence.db');
 
-  const nightwireIdentity = createDeviceIdentity(keyStore, {
-    profileId: scenario.nightwireSession.actorProfileId,
-    platform: scenario.nightwireDevice.platform,
-    appVersion: scenario.nightwireDevice.appVersion,
-    deviceId: scenario.nightwireDevice.id,
-  }).identity;
-  const marcusIdentity = createDeviceIdentity(keyStore, {
-    profileId: scenario.marcusSession.actorProfileId,
-    platform: scenario.marcusDevice.platform,
-    appVersion: scenario.marcusDevice.appVersion,
-    deviceId: scenario.marcusDevice.id,
-  }).identity;
+  // Deterministic, fixture-only key material (see fixtureDeviceKeys.ts) —
+  // not a fresh CSPRNG-generated keypair on every run. Production device
+  // identity (`createDeviceIdentity`) is completely untouched and still
+  // always uses the real CSPRNG; this fixture is the one, narrow,
+  // documented exception. This is what makes every downstream hash in
+  // this fixture (signatures, integrityManifest.canonicalHash, delivery
+  // package hashes) byte-for-byte identical across regenerations.
+  const nightwireIdentity = loadDeterministicFixtureIdentity(keyStore, scenario.nightwireDevice.id, 'nightwire');
+  const marcusIdentity = loadDeterministicFixtureIdentity(keyStore, scenario.marcusDevice.id, 'marcus');
 
   const nightwireEvents = scenario.events.filter((e) => e.deviceId === scenario.nightwireDevice.id);
   const marcusEvents = scenario.events.filter((e) => e.deviceId === scenario.marcusDevice.id);

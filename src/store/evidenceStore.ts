@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { AssetId, BatchId, CheckpointId, ContributionClaimId, DeviceId, EventId, ProjectId, SessionId } from '../domain/ids.js';
 import type { BatchValidationStatus } from '../domain/enums.js';
+import type { CreativeProject } from '../domain/creativeProject.js';
 import type { StudioDevice } from '../domain/studioDevice.js';
 import type { StudioSession } from '../domain/studioSession.js';
 import type { ProvenanceEvent } from '../domain/provenanceEvent.js';
@@ -20,12 +21,14 @@ import {
   deviceToRow,
   eventToRow,
   projectAssetToRow,
+  projectToRow,
   rowToBatch,
   rowToCheckpoint,
   rowToContributorReference,
   rowToDevice,
   rowToDevicePublicKeySpkiDer,
   rowToEvent,
+  rowToProject,
   rowToProjectAsset,
   rowToSession,
   sessionToRow,
@@ -37,6 +40,7 @@ import {
   type DeviceRow,
   type EventRow,
   type ProjectAssetRow,
+  type ProjectRow,
   type SessionEndRow,
   type SessionRow,
 } from './rows.js';
@@ -126,6 +130,33 @@ export class LocalEvidenceStore {
       }
       throw new StoreConflictError(table, String(row[idColumn]));
     }
+  }
+
+  // ---- Projects ---------------------------------------------------------
+
+  /**
+   * Persists a `CreativeProject`. Same immutable-fact-table posture as
+   * every other insert method here — see schema.ts's V4 docstring for why
+   * `projects` is insert-once rather than mutable.
+   */
+  insertProject(project: CreativeProject, storedAt: string): InsertResult {
+    return this.insertFactRow('projects', 'id', projectToRow(project, storedAt) as unknown as Record<
+      string,
+      SqlPrimitive
+    >);
+  }
+
+  getProject(projectId: ProjectId): CreativeProject | undefined {
+    const row = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as ProjectRow | undefined;
+    return row === undefined ? undefined : rowToProject(row);
+  }
+
+  /** All projects, ordered by createdAt then rowid — same determinism rule as every other list method in this store. */
+  listProjects(): CreativeProject[] {
+    const rows = this.db
+      .prepare('SELECT * FROM projects ORDER BY createdAt ASC, rowid ASC')
+      .all() as unknown as ProjectRow[];
+    return rows.map(rowToProject);
   }
 
   // ---- Devices --------------------------------------------------------
@@ -445,19 +476,38 @@ export class LocalEvidenceStore {
   // ---- Atomic multi-record evidence assembly -------------------------------
 
   /**
-   * Inserts a set of events, and optionally a checkpoint and/or a batch,
-   * atomically: either everything durably persists, or (on any failure —
-   * including a `StoreConflictError` partway through) nothing does. No
-   * partial evidence bundle is ever left behind because a caller crashed
-   * or threw halfway through a logical write.
+   * Inserts a session, a set of events, and optionally a checkpoint,
+   * batch, and/or asset, atomically: either everything durably persists,
+   * or (on any failure — including a `StoreConflictError` partway through)
+   * nothing does. No partial evidence bundle is ever left behind because a
+   * caller crashed or threw halfway through a logical write.
+   *
+   * `session` and `asset` were added for Capture Studio V1's local write
+   * path (session-start pairs a `StudioSession` with its own
+   * `session_started` event; file ingestion pairs a `ProjectAsset` with
+   * its own `asset_imported` event) — both are exactly the same kind of
+   * "one logical write, several records" grouping `events`/`checkpoint`/
+   * `batch` already were, just two more optional record kinds in the same
+   * transaction. `session`, when present, is inserted FIRST (before
+   * `events`), since `events.sessionId`/`project_assets.introducedBySessionId`
+   * both reference it. `asset` is inserted LAST, after `batch`.
+   *
+   * Deliberately NOT extended to include a `ContributorReference` claim —
+   * see `insertContributorReference`'s own docstring for why a claim stays
+   * structurally outside this atomic grouping.
    */
   insertEvidenceBundle(bundle: {
+    readonly session?: StudioSession;
     readonly events?: readonly ProvenanceEvent[];
     readonly checkpoint?: ProvenanceCheckpoint;
     readonly batch?: ProvenanceBatch;
+    readonly asset?: ProjectAsset;
     readonly storedAt: string;
   }): void {
     withTransaction(this.db, () => {
+      if (bundle.session !== undefined) {
+        this.insertSession(bundle.session, bundle.storedAt);
+      }
       for (const event of bundle.events ?? []) {
         this.insertEvent(event, bundle.storedAt);
       }
@@ -466,6 +516,9 @@ export class LocalEvidenceStore {
       }
       if (bundle.batch !== undefined) {
         this.insertBatchWithinTransaction(bundle.batch, bundle.storedAt);
+      }
+      if (bundle.asset !== undefined) {
+        this.insertProjectAsset(bundle.asset, bundle.storedAt);
       }
     });
   }

@@ -67,7 +67,7 @@
         "platform": "windows",
         "appVersion": "1.0.0-sim",
         "deviceKeyFingerprint": "baf436ebbc6e4a58ce8fb22310e84de7ef89893132881116835f643374e5388d",
-        "publicKeySpkiDerBase64": "MCowBQYDK2VwAyEA4hoz8EDiwj5jJ19siHqH7l+o9eiMoBKmFpyZbA1xLk0=",
+        "publicKeySpkiDerBase64": "MCowBQYDK2VwAyEA1g8tNl55GwtUStsjNSGYn8nZk2t0nXS8EgvGHWR1dg4=",
         "verifiedAt": "2026-01-05T18:07:00.000Z"
       },
       {
@@ -76,7 +76,7 @@
         "platform": "macos",
         "appVersion": "1.0.0-sim",
         "deviceKeyFingerprint": "3092f6c7c523bd2c239ba21985ffe2286da21f2695bc4e95f206a72c7fd4157d",
-        "publicKeySpkiDerBase64": "MCowBQYDK2VwAyEASTjbgxREOKgCXCfvQ93pRgFNM8Fin4l0k1NQKeuIKAc=",
+        "publicKeySpkiDerBase64": "MCowBQYDK2VwAyEAKAkKWOh7T/CeDHAq+ZvvhdCEaVzTAYnFNyDe44DSj+0=",
         "verifiedAt": "2026-01-05T18:06:00.000Z"
       }
     ],
@@ -403,7 +403,7 @@
         "firstEventAt": "2026-01-05T18:08:00.000Z",
         "lastEventAt": "2026-01-05T18:21:00.000Z",
         "manifestHash": "4f0796efa88395d5de86ac8ff9042878e515aae7a36d41e288240ac9f0407b0b",
-        "signature": "QeCQ+d9nq8Z3eHOLXzlsLj0xKKxVmnLREEVYqI16BkYcOJjgVOJqdnnCgRJ8uP65c+pv2nU0GVp8DVBEdg4jDA==",
+        "signature": "6CqGsiUMdObz9K+eButomDnRQbqCzXnStByHDm2Eb3suAO6eGR+an2BX5zHHvP6X/tD8iZkNgFx4DfHB8AJWAw==",
         "validationStatus": "pending",
         "createdAt": "2026-01-05T18:20:00.000Z"
       },
@@ -416,7 +416,7 @@
         "firstEventAt": "2026-01-05T18:22:00.000Z",
         "lastEventAt": "2026-01-05T18:40:00.000Z",
         "manifestHash": "7eebaeed8dd48bbb6cd0a9d47105c314d2b19c1d6b7a4010e6322228608331c0",
-        "signature": "usjzGLaZ06xJmcvRjD6REkgct3dfJ9erVep1UCW6O3P4yrF/930P1aHRvcfonF2l747KK3fxOhokzEjkYjZRBQ==",
+        "signature": "DCsZLL5igNX/5HkKNpvF8oF3WqHr2kRV73VwdZ8CbzZrmxq85Jowy9Nv2BOrFMKc8+EnueicPOTVw+hV+pa7DA==",
         "validationStatus": "pending",
         "createdAt": "2026-01-05T18:29:00.000Z"
       }
@@ -587,7 +587,7 @@
     "evidenceReferenceSchemaVersion": 1,
     "integrityManifest": {
       "algorithm": "sha256",
-      "canonicalHash": "b40e1598d97c1d07faac40e7420b3f818bb42337fdd608fd0f042830a35c98b8"
+      "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
     }
   },
   "dossier": {
@@ -595,7 +595,7 @@
     "generatedAt": "2026-01-07T09:05:00.000Z",
     "sourceEvidenceBundle": {
       "exportedAt": "2026-01-07T09:00:00.000Z",
-      "canonicalHash": "b40e1598d97c1d07faac40e7420b3f818bb42337fdd608fd0f042830a35c98b8"
+      "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
     },
     "project": {
       "projectId": "project-cold-nights",
@@ -737,7 +737,7 @@
       "source": {
         "evidenceBundle": {
           "exportedAt": "2026-01-07T09:00:00.000Z",
-          "canonicalHash": "b40e1598d97c1d07faac40e7420b3f818bb42337fdd608fd0f042830a35c98b8"
+          "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
         },
         "projectDossier": {
           "generatedAt": "2026-01-07T09:05:00.000Z",
@@ -891,7 +891,7 @@
       ],
       "integrityManifest": {
         "algorithm": "sha256",
-        "canonicalHash": "fef3c5a39d8d10e6bdc343e52d8f2dc5500ecd0cecea6f77caf4b296f6a5bc7a"
+        "canonicalHash": "c6a8350ce02738431cbf25781df0bd21b392c70b4072bf9f1e40d6ca2631470d"
       }
     },
     "labelLicensing": {
@@ -902,7 +902,7 @@
       "source": {
         "evidenceBundle": {
           "exportedAt": "2026-01-07T09:00:00.000Z",
-          "canonicalHash": "b40e1598d97c1d07faac40e7420b3f818bb42337fdd608fd0f042830a35c98b8"
+          "canonicalHash": "79e2735c3f7292f3bb559d0410971206c1e427d8bcd8cdd668a01c005eab72fa"
         },
         "projectDossier": {
           "generatedAt": "2026-01-07T09:05:00.000Z",
@@ -947,7 +947,7 @@
       ],
       "integrityManifest": {
         "algorithm": "sha256",
-        "canonicalHash": "22a2b7da0dad19f6e9acf17a06872e29ed77a0ec5dd46b633fcf98c11d38b68d"
+        "canonicalHash": "1e3e0b160af5809696b39f7f8483916613d833079157190729873426dd47f119"
       }
     }
   }

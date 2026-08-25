@@ -16,17 +16,36 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      # A single `npm ci` at the repo root installs every npm workspace
+      # (root + apps/*, per package-lock.json's one shared lockfile) —
+      # never a second `npm ci` inside apps/capture-studio.
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint
+      - name: Lint (core engine)
         run: npm run lint
 
-      - name: Typecheck
+      - name: Typecheck (core engine)
         run: npm run typecheck
 
-      - name: Test
+      - name: Test (core engine)
         run: npm test
 
-      - name: Build
+      - name: Build (core engine)
         run: npm run build
+
+      # Capture Studio (apps/capture-studio) — its own workspace, own
+      # scripts (see apps/capture-studio/package.json). `typecheck`/`build`
+      # there already cover both the browser app (tsconfig.json) and the
+      # local Studio service (service/tsconfig.json).
+      - name: Lint (Capture Studio)
+        run: npm run lint --workspace=apps/capture-studio
+
+      - name: Typecheck (Capture Studio)
+        run: npm run typecheck --workspace=apps/capture-studio
+
+      - name: Test (Capture Studio)
+        run: npm test --workspace=apps/capture-studio
+
+      - name: Build (Capture Studio)
+        run: npm run build --workspace=apps/capture-studio

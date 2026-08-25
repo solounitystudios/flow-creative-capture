@@ -12,8 +12,40 @@ import { ContributorsView } from './components/ContributorsView.js';
 import { ProvenanceView } from './components/ProvenanceView.js';
 import { DocumentsView } from './components/DocumentsView.js';
 import { DeliveryView } from './components/DeliveryView.js';
+import { LiveStudio } from './live/LiveStudio.js';
 
+type AppMode = 'demo' | 'live';
+
+/**
+ * Two modes, deliberately kept apart rather than merged into one nav:
+ * "demo" is the existing, unmodified Cold Nights fixture shell (still the
+ * full reference for Timeline/Provenance/Documents/Delivery once real
+ * checkpoint/batch/trust data exists); "live" (`./live/LiveStudio.js`) is
+ * Capture Studio V1's real, persisted project/session/asset/contributor
+ * write path over the local Studio service. Defaults to "demo" so this
+ * component's existing rendering — and every existing test that asserts
+ * on it — is completely unchanged; the toggle is the only new surface
+ * here.
+ */
 export function App() {
+  const [mode, setMode] = useState<AppMode>('demo');
+
+  return (
+    <div>
+      <div className="mode-toggle" role="group" aria-label="Capture Studio mode">
+        <button type="button" className="btn btn--ghost" aria-pressed={mode === 'live'} onClick={() => setMode('live')}>
+          Live Studio
+        </button>
+        <button type="button" className="btn btn--ghost" aria-pressed={mode === 'demo'} onClick={() => setMode('demo')}>
+          Cold Nights Demo
+        </button>
+      </div>
+      {mode === 'live' ? <LiveStudio /> : <DemoShell />}
+    </div>
+  );
+}
+
+function DemoShell() {
   const [activeNav, setActiveNav] = useState<NavKey>('capture');
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>(
