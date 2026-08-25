@@ -1,0 +1,93 @@
+/**
+ * Capture Studio design tokens. Dark, professional, DAW-adjacent --
+ * deliberately restrained: no gradients-as-decoration, no neon, no
+ * cyberpunk. Every color/spacing/radius value lives here so components
+ * never hard-code a raw value.
+ */
+:root {
+  /* Surfaces -- layered dark, lightest at the "closest to the user" layer */
+  --surface-0: #0b0d10; /* app background */
+  --surface-1: #111418; /* nav / top bar */
+  --surface-2: #161a1f; /* panels, cards */
+  --surface-3: #1c2127; /* raised cards, inspector */
+  --surface-4: #232830; /* hover/active surface */
+  --surface-border: #2a2f37;
+  --surface-border-strong: #3a4149;
+
+  /* Text */
+  --text-primary: #e9edf1;
+  --text-secondary: #9aa4b2;
+  --text-tertiary: #6b7480;
+  --text-on-accent: #0b0d10;
+
+  /* Accent -- a single restrained studio blue, used sparingly */
+  --accent: #5b8def;
+  --accent-strong: #7ba3f5;
+  --accent-muted: rgba(91, 141, 239, 0.14);
+
+  /* Semantic status colors -- each tied to ONE precise meaning, never reused loosely */
+  --status-neutral: #6b7480;
+  --status-neutral-bg: rgba(107, 116, 128, 0.14);
+  --status-sound: #4bb383;
+  --status-sound-bg: rgba(75, 179, 131, 0.14);
+  --status-claim: #d9a441;
+  --status-claim-bg: rgba(217, 164, 65, 0.14);
+  --status-invalid: #e0616b;
+  --status-invalid-bg: rgba(224, 97, 107, 0.14);
+
+  /* Typography */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.3125rem;
+  --text-xl: 1.75rem;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
+
+  /* Motion -- CSS-only, no animation library */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --topbar-height: 56px;
+  --nav-width: 216px;
+  --nav-width-collapsed: 64px;
+  --inspector-width: 340px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+  }
+}

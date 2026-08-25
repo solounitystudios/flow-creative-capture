@@ -5,22 +5,26 @@
  * one and only place this app touches the real Capture engine
  * (`../../../src/*`), because the engine's hashing/store code depends on
  * `node:crypto`/`node:sqlite`, neither of which exist in a browser bundle.
- * Everything it produces is REAL engine output (the actual Cold Nights
- * scenario, actually persisted to a real in-memory `LocalEvidenceStore`,
- * actually assembled into a real `EvidenceBundleExport` /
- * `ProjectDossier` / two real `DeliveryPackage`s) -- not hand-authored
- * fake JSON pretending to be engine output. The app then imports the
- * frozen result as static data and never re-executes any engine code.
+ * Everything it produces is REAL engine output -- not hand-authored fake
+ * JSON pretending to be engine output. The app then imports the frozen
+ * result as static data and never re-executes any engine code.
  *
- * `ProjectAsset` persistence (a `LocalEvidenceStore.insertProjectAsset`
- * method, an `assets` field on `EvidenceBundleExport`, etc.) is a
- * SEPARATE, not-yet-merged batch (see PR #8) -- it is not on `main`, which
- * is what this app branches from. So the asset data below comes directly
- * from `runColdNightsScenario()`'s own `assets` (still real, validated,
- * hashed `ProjectAsset` domain objects -- just not yet run through a
- * persisted store/bundle pipeline). The fixture and the UI are both
- * explicit about this: assets are demo-scenario data, not "queried from a
- * persisted store."
+ * REAL PERSISTED PATH (as of ProjectAsset Persistence V1, PR #8, now
+ * merged into `main`): the Cold Nights scenario's six assets are inserted
+ * into a real, FILE-BACKED `LocalEvidenceStore` via `insertProjectAsset`,
+ * the store is genuinely CLOSED and REOPENED (proving durability, not
+ * just an in-memory session), and only THEN are `listProjectAssetsForProject`,
+ * `assembleEvidenceBundle`, `buildProjectDossier`, and `buildDeliveryPackage`
+ * called against the reopened store. `bundle.assets`, `dossier.assetInventory`,
+ * and the Delivery Package `assets` section in this fixture are therefore
+ * genuinely persisted-and-reloaded data, not a bypass of the store.
+ *
+ * STILL DEMO/IN-MEMORY ONLY: `AssetRelationship` persistence does not
+ * exist anywhere in this codebase yet, so `relationships` below comes
+ * straight from the simulator's in-memory scenario, never a store. The
+ * UI must only ever show it behind an explicit "demo relationship graph"
+ * label -- never presented as persisted truth. Same for `ReleaseCandidate`
+ * state, which this fixture does not carry at all.
  */
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -45,8 +49,10 @@ const CREATED_AT = '2026-01-07T09:10:00.000Z';
 function main() {
   const scenario = runColdNightsScenario();
 
-  const keyStoreDir = mkdtempSync(join(tmpdir(), 'flow-capture-studio-fixture-keystore-'));
-  const keyStore = new FileDeviceKeyStore(keyStoreDir);
+  const workDir = mkdtempSync(join(tmpdir(), 'flow-capture-studio-fixture-'));
+  const keyStore = new FileDeviceKeyStore(join(workDir, 'keys'));
+  const dbPath = join(workDir, 'evidence.db');
+
   const nightwireIdentity = createDeviceIdentity(keyStore, {
     profileId: scenario.nightwireSession.actorProfileId,
     platform: scenario.nightwireDevice.platform,
@@ -86,49 +92,72 @@ function main() {
     marcusIdentity,
   );
 
-  const store = new LocalEvidenceStore(':memory:');
-  store.insertDevice(scenario.nightwireDevice, nightwireIdentity.publicKeySpkiDer, scenario.nightwireSession.startedAt);
-  store.insertDevice(scenario.marcusDevice, marcusIdentity.publicKeySpkiDer, scenario.marcusSession.startedAt);
-  store.insertSession(scenario.nightwireSession, scenario.nightwireSession.startedAt);
-  store.insertSession(scenario.marcusSession, scenario.marcusSession.startedAt);
+  // --- Write phase: a real, file-backed store, not :memory:. ---------------
+  const writeStore = new LocalEvidenceStore(dbPath);
+  writeStore.insertDevice(scenario.nightwireDevice, nightwireIdentity.publicKeySpkiDer, scenario.nightwireSession.startedAt);
+  writeStore.insertDevice(scenario.marcusDevice, marcusIdentity.publicKeySpkiDer, scenario.marcusSession.startedAt);
+  writeStore.insertSession(scenario.nightwireSession, scenario.nightwireSession.startedAt);
+  writeStore.insertSession(scenario.marcusSession, scenario.marcusSession.startedAt);
   if (scenario.nightwireSession.endedAt !== undefined) {
-    store.endSession(scenario.nightwireSession.id, scenario.nightwireSession.endedAt, 'ended', scenario.nightwireSession.endedAt);
+    writeStore.endSession(scenario.nightwireSession.id, scenario.nightwireSession.endedAt, 'ended', scenario.nightwireSession.endedAt);
   }
   if (scenario.marcusSession.endedAt !== undefined) {
-    store.endSession(scenario.marcusSession.id, scenario.marcusSession.endedAt, 'ended', scenario.marcusSession.endedAt);
+    writeStore.endSession(scenario.marcusSession.id, scenario.marcusSession.endedAt, 'ended', scenario.marcusSession.endedAt);
   }
-  store.insertEvidenceBundle({
+  writeStore.insertEvidenceBundle({
     events: nightwireEvents,
     checkpoint: scenario.checkpoints[0],
     batch: nightwireBatch,
     storedAt: scenario.nightwireSession.endedAt ?? scenario.nightwireSession.startedAt,
   });
-  store.insertEvidenceBundle({
+  writeStore.insertEvidenceBundle({
     events: marcusEvents,
     checkpoint: scenario.checkpoints[1],
     storedAt: scenario.marcusSession.endedAt ?? scenario.marcusSession.startedAt,
   });
-  store.insertEvidenceBundle({
+  writeStore.insertEvidenceBundle({
     checkpoint: scenario.checkpoints[2],
     batch: marcusBatch,
     storedAt: scenario.marcusSession.endedAt ?? scenario.marcusSession.startedAt,
   });
   for (const claim of scenario.contributors) {
-    store.insertContributorReference(claim, claim.claimedAt);
+    writeStore.insertContributorReference(claim, claim.claimedAt);
+  }
+  // The six real ProjectAsset domain objects, persisted for real via the
+  // real store API -- MIDI, sample, stem, guitar take, mix, master.
+  for (const asset of Object.values(scenario.assets)) {
+    writeStore.insertProjectAsset(asset, asset.firstSeenAt);
+  }
+  writeStore.close();
+
+  // --- Reopen phase: a genuinely new store instance over the same file. ---
+  // Proves durability (not just reading back an in-memory session) before
+  // anything downstream (bundle/dossier/delivery) is assembled.
+  const reopenedStore = new LocalEvidenceStore(dbPath);
+  const persistedAssets = reopenedStore.listProjectAssetsForProject(scenario.project.id);
+  if (persistedAssets.length !== 6) {
+    throw new Error(`Expected 6 persisted assets after reopen, found ${persistedAssets.length}`);
   }
 
-  const bundle = assembleEvidenceBundle(store, { projectId: scenario.project.id, exportedAt: EXPORTED_AT });
+  const bundle = assembleEvidenceBundle(reopenedStore, { projectId: scenario.project.id, exportedAt: EXPORTED_AT });
+  if (bundle.assets.length !== 6) {
+    throw new Error(`Expected bundle.assets to contain 6 persisted assets, found ${bundle.assets.length}`);
+  }
   const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+  if (dossier.assetInventory.length !== 6) {
+    throw new Error(`Expected dossier.assetInventory to contain 6 entries, found ${dossier.assetInventory.length}`);
+  }
 
   // Two real, differently-scoped packages -- demonstrating that selective
   // disclosure is genuine, not cosmetic: the licensing package is visibly
-  // narrower than the collaborator package, because privacy-by-default
-  // means a section is only ever present when explicitly requested.
+  // narrower than the collaborator package (no assets, no contributor
+  // claims, no participant activity), because privacy-by-default means a
+  // section is only ever present when explicitly requested.
   const collaboratorPackage = buildDeliveryPackage(bundle, dossier, {
     createdAt: CREATED_AT,
     audience: 'collaborator',
     purpose: 'review',
-    includeSections: ['project', 'participants', 'contributorClaims', 'activity', 'trustSummary', 'disclaimers'],
+    includeSections: ['project', 'participants', 'contributorClaims', 'assets', 'activity', 'trustSummary', 'disclaimers'],
   });
   const labelPackage = buildDeliveryPackage(bundle, dossier, {
     createdAt: CREATED_AT,
@@ -136,17 +165,22 @@ function main() {
     purpose: 'licensing',
     includeSections: ['project', 'trustSummary', 'disclaimers'],
   });
+  if (collaboratorPackage.sections.assets === undefined || collaboratorPackage.sections.assets.length !== 6) {
+    throw new Error('Expected the collaborator Delivery Package to carry all 6 persisted assets');
+  }
+  if (labelPackage.sections.assets !== undefined) {
+    throw new Error('Expected the label Delivery Package to omit assets (not requested) -- privacy-by-default regression');
+  }
 
-  store.close();
-  rmSync(keyStoreDir, { recursive: true, force: true });
+  reopenedStore.close();
+  rmSync(workDir, { recursive: true, force: true });
 
   const fixture = {
     schemaNote:
-      'Real FLOW Creative Capture engine output for the Cold Nights demo scenario, generated once by scripts/generateFixture.ts and frozen as static data. assets/relationships come directly from the simulator (not yet routed through a persisted store on this branch -- see PR #8). Nothing here is live or interactive.',
+      'Real FLOW Creative Capture engine output for the Cold Nights demo scenario, generated once by scripts/generateFixture.ts and frozen as static data. All six assets, the Evidence Bundle, Project Dossier, and Delivery Packages below were produced by genuinely persisting to a file-backed LocalEvidenceStore, closing it, reopening it, and reading back through the real assembleEvidenceBundle/buildProjectDossier/buildDeliveryPackage pipeline -- not a bypass. relationships is the one exception: AssetRelationship has no persistence anywhere in this codebase yet, so it is carried through directly from the in-memory simulator scenario and must only ever be shown in the UI behind an explicit demo-graph label. Nothing in this file is live or interactive.',
     generatedAt: GENERATED_AT,
     project: scenario.project,
     workReference: scenario.workReference,
-    assets: scenario.assets,
     relationships: scenario.relationships,
     bundle,
     dossier,
@@ -159,7 +193,7 @@ function main() {
   const outPath = resolve(__dirname, '../src/data/coldNightsFixture.generated.json');
   writeFileSync(outPath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8');
   // eslint-disable-next-line no-console
-  console.log(`Wrote ${outPath}`);
+  console.log(`Wrote ${outPath} -- ${persistedAssets.length} persisted assets verified through close/reopen.`);
 }
 
 main();
