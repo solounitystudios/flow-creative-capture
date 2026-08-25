@@ -248,10 +248,12 @@ export interface CheckpointRow {
   readonly workReference: string | null;
   readonly sessionId: string;
   readonly actorProfileId: string;
+  readonly deviceId: string;
   readonly sequence: number;
   readonly previousCheckpointHash: string | null;
   readonly manifestHash: string;
   readonly checkpointHash: string;
+  readonly signature: string | null;
   readonly triggerType: string;
   readonly createdAt: string;
   readonly storedAt: string;
@@ -264,10 +266,12 @@ export function checkpointToRow(checkpoint: ProvenanceCheckpoint, storedAt: stri
     workReference: checkpoint.workReference ?? null,
     sessionId: checkpoint.sessionId,
     actorProfileId: checkpoint.actorProfileId,
+    deviceId: checkpoint.deviceId,
     sequence: checkpoint.sequence,
     previousCheckpointHash: checkpoint.previousCheckpointHash ?? null,
     manifestHash: checkpoint.manifestHash,
     checkpointHash: checkpoint.checkpointHash,
+    signature: checkpoint.signature ?? null,
     triggerType: checkpoint.triggerType,
     createdAt: checkpoint.createdAt,
     storedAt,
@@ -281,10 +285,12 @@ export function rowToCheckpoint(row: CheckpointRow): ProvenanceCheckpoint {
     ...(row.workReference !== null ? { workReference: asWorkReferenceId(row.workReference) } : {}),
     sessionId: asSessionId(row.sessionId),
     actorProfileId: asProfileId(row.actorProfileId),
+    deviceId: asDeviceId(row.deviceId),
     sequence: row.sequence,
     ...(row.previousCheckpointHash !== null ? { previousCheckpointHash: row.previousCheckpointHash } : {}),
     manifestHash: row.manifestHash,
     checkpointHash: row.checkpointHash,
+    ...(row.signature !== null ? { signature: row.signature } : {}),
     triggerType: row.triggerType as CheckpointTriggerType,
     createdAt: row.createdAt,
   });

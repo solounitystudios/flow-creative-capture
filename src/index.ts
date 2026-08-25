@@ -19,6 +19,12 @@ export type {
 export { createDeviceIdentity, loadDeviceIdentity, verifyCanonicalSignature } from './device/identity.js';
 export type { BatchSigningPayload, BatchVerificationFailureReason, BatchVerificationResult } from './device/batchSigning.js';
 export { buildBatchSigningPayload, signProvenanceBatch, verifySignedBatch } from './device/batchSigning.js';
+export type {
+  CheckpointSigningPayload,
+  CheckpointVerificationFailureReason,
+  CheckpointVerificationResult,
+} from './device/checkpointSigning.js';
+export { buildCheckpointSigningPayload, signProvenanceCheckpoint, verifySignedCheckpoint } from './device/checkpointSigning.js';
 export type { DeviceTrustEvaluation } from './device/trust.js';
 export { evaluateBatchTrust } from './device/trust.js';
 export type { DeviceKeyStore, StoredKeyMaterial } from './device/keyStore.js';
@@ -54,6 +60,13 @@ export type {
   StoredBatchStructureStatus,
 } from './trust/batchTrust.js';
 export { evaluateStoredBatchTrust } from './trust/batchTrust.js';
+export type {
+  CheckpointTrustEvaluation,
+  CheckpointTrustReason,
+  StoredCheckpointSignatureStatus,
+  StoredCheckpointStructureStatus,
+} from './trust/checkpointTrust.js';
+export { evaluateStoredCheckpointTrust } from './trust/checkpointTrust.js';
 
 /**
  * Evidence Bundle Export (`src/evidence`) — a pure, read-only assembly

@@ -136,10 +136,15 @@ export interface StudioHttpServerOptions {
  */
 export function createStudioHttpServer(service: StudioService, options: StudioHttpServerOptions): Server {
   const projectSessionsPattern = /^\/projects\/([^/]+)\/sessions$/;
+  const projectSessionEndPattern = /^\/projects\/([^/]+)\/sessions\/([^/]+)\/end$/;
   const projectSessionAssetsPattern = /^\/projects\/([^/]+)\/sessions\/([^/]+)\/assets$/;
+  const projectSessionCheckpointsPattern = /^\/projects\/([^/]+)\/sessions\/([^/]+)\/checkpoints$/;
   const projectSnapshotPattern = /^\/projects\/([^/]+)\/snapshot$/;
   const projectByIdPattern = /^\/projects\/([^/]+)$/;
   const projectContributorClaimsPattern = /^\/projects\/([^/]+)\/contributor-claims$/;
+  const projectCheckpointsPattern = /^\/projects\/([^/]+)\/checkpoints$/;
+  const projectCheckpointByIdPattern = /^\/projects\/([^/]+)\/checkpoints\/([^/]+)$/;
+  const projectCheckpointVerifyPattern = /^\/projects\/([^/]+)\/checkpoints\/([^/]+)\/verify$/;
 
   return createServer((req, res) => {
     setCorsHeaders(res, options.allowedOrigin);
@@ -155,10 +160,15 @@ export function createStudioHttpServer(service: StudioService, options: StudioHt
 
     void handleRequest(service, req, res, pathname, url.searchParams, {
       projectSessionsPattern,
+      projectSessionEndPattern,
       projectSessionAssetsPattern,
+      projectSessionCheckpointsPattern,
       projectSnapshotPattern,
       projectByIdPattern,
       projectContributorClaimsPattern,
+      projectCheckpointsPattern,
+      projectCheckpointByIdPattern,
+      projectCheckpointVerifyPattern,
     }).catch((error: unknown) => {
       if (res.headersSent) {
         return;
@@ -183,10 +193,15 @@ export function createStudioHttpServer(service: StudioService, options: StudioHt
 
 interface RoutePatterns {
   readonly projectSessionsPattern: RegExp;
+  readonly projectSessionEndPattern: RegExp;
   readonly projectSessionAssetsPattern: RegExp;
+  readonly projectSessionCheckpointsPattern: RegExp;
   readonly projectSnapshotPattern: RegExp;
   readonly projectByIdPattern: RegExp;
   readonly projectContributorClaimsPattern: RegExp;
+  readonly projectCheckpointsPattern: RegExp;
+  readonly projectCheckpointByIdPattern: RegExp;
+  readonly projectCheckpointVerifyPattern: RegExp;
 }
 
 async function handleRequest(
@@ -241,6 +256,14 @@ async function handleRequest(
     return;
   }
 
+  const sessionEndMatch = pathname.match(patterns.projectSessionEndPattern);
+  if (sessionEndMatch !== null && method === 'POST') {
+    const [, projectId, sessionId] = sessionEndMatch;
+    const session = service.endSession(projectId!, sessionId!);
+    sendJson(res, 200, session);
+    return;
+  }
+
   const assetsMatch = pathname.match(patterns.projectSessionAssetsPattern);
   if (assetsMatch !== null && method === 'POST') {
     const [, projectId, sessionId] = assetsMatch;
@@ -252,6 +275,40 @@ async function handleRequest(
       ...(searchParams.get('sourceType') !== null ? { sourceType: searchParams.get('sourceType')! } : {}),
     });
     sendJson(res, 201, asset);
+    return;
+  }
+
+  const sessionCheckpointsMatch = pathname.match(patterns.projectSessionCheckpointsPattern);
+  if (sessionCheckpointsMatch !== null && method === 'POST') {
+    const [, projectId, sessionId] = sessionCheckpointsMatch;
+    const body = await readJsonBody(req);
+    const checkpoint = service.createCheckpoint(projectId!, sessionId!, {
+      actorProfileId: requireString(body, 'actorProfileId'),
+      ...(optionalString(body, 'triggerType') !== undefined ? { triggerType: optionalString(body, 'triggerType')! } : {}),
+    });
+    sendJson(res, 201, checkpoint);
+    return;
+  }
+
+  const checkpointVerifyMatch = pathname.match(patterns.projectCheckpointVerifyPattern);
+  if (checkpointVerifyMatch !== null && method === 'POST') {
+    const [, projectId, checkpointId] = checkpointVerifyMatch;
+    const evaluation = service.verifyCheckpoint(projectId!, checkpointId!);
+    sendJson(res, 200, evaluation);
+    return;
+  }
+
+  const checkpointsListMatch = pathname.match(patterns.projectCheckpointsPattern);
+  if (checkpointsListMatch !== null && method === 'GET') {
+    const [, projectId] = checkpointsListMatch;
+    sendJson(res, 200, service.listCheckpoints(projectId!));
+    return;
+  }
+
+  const checkpointByIdMatch = pathname.match(patterns.projectCheckpointByIdPattern);
+  if (checkpointByIdMatch !== null && method === 'GET') {
+    const [, projectId, checkpointId] = checkpointByIdMatch;
+    sendJson(res, 200, service.getCheckpoint(projectId!, checkpointId!));
     return;
   }
 

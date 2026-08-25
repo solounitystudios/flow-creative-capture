@@ -1,29 +1,31 @@
 import { useEffect, useState } from 'react';
 import type { CreativeProject } from '../../../../src/domain/creativeProject.js';
+import type { ProvenanceCheckpoint } from '../../../../src/domain/provenanceCheckpoint.js';
+import type { CheckpointTrustEvaluation } from '../../../../src/trust/checkpointTrust.js';
 import * as studioClient from './studioClient.js';
 import type { ProjectSnapshot } from './studioClient.js';
 import { ProjectsPanel } from './ProjectsPanel.js';
 import { SessionAndIngestPanel } from './SessionAndIngestPanel.js';
 import { ContributorClaimPanel } from './ContributorClaimPanel.js';
+import { EvidenceTimeline } from './EvidenceTimeline.js';
 import { ActivityFeed } from '../components/ActivityFeed.js';
 import { LiveAssetDetail } from './LiveAssetDetail.js';
 import { buildLiveActivityFeed } from './liveViewModels.js';
 import { humanize } from '../lib/viewModels.js';
 
 /**
- * Capture Studio V1's live mode: a real, persisted project/session/asset/
- * contributor-claim workflow over the local Studio service
- * (`apps/capture-studio/service`) — replacing the Cold Nights static
- * fixture with genuinely created, stored, and reloaded data. See
+ * Capture Studio's live mode: a real, persisted project/session/asset/
+ * contributor-claim/evidence-checkpoint workflow over the local Studio
+ * service (`apps/capture-studio/service`) — replacing the Cold Nights
+ * static fixture with genuinely created, stored, and reloaded data. See
  * `service/studioService.ts`'s docstring for the full architecture this
  * component is the browser-side front end of.
  *
- * Deliberately does NOT attempt Timeline/Provenance-trust/Documents/
- * Delivery views for live data in this pass — those need checkpoint/
- * batch signing and trust evaluation, which this pass's write path does
- * not create (see the final implementation report). The Cold Nights demo
- * (`App.tsx`'s other mode) remains the full reference for what those
- * views look like once that evidence exists.
+ * Capture Studio V2 (Live Signed Evidence Checkpoints) adds `EvidenceTimeline`
+ * below: real, device-signed checkpoints over this project's actual
+ * history, each independently re-verified via `studioClient.verifyCheckpoint`
+ * rather than trusted at face value. The Cold Nights demo (`App.tsx`'s
+ * other mode) remains a separate, fixture-driven reference view.
  */
 export function LiveStudio() {
   const [projects, setProjects] = useState<CreativeProject[]>([]);
@@ -39,7 +41,12 @@ export function LiveStudio() {
   const [startingSession, setStartingSession] = useState(false);
   const [ingesting, setIngesting] = useState(false);
   const [addingClaim, setAddingClaim] = useState(false);
+  const [endingSession, setEndingSession] = useState(false);
+  const [creatingCheckpoint, setCreatingCheckpoint] = useState(false);
   const [actionError, setActionError] = useState<string | undefined>(undefined);
+
+  const [checkpoints, setCheckpoints] = useState<ProvenanceCheckpoint[]>([]);
+  const [checkpointEvaluations, setCheckpointEvaluations] = useState<Record<string, CheckpointTrustEvaluation>>({});
 
   const actorProfileId = 'creator-1';
 
@@ -68,6 +75,26 @@ export function LiveStudio() {
     }
   }
 
+  /**
+   * Loads a project's checkpoints, then independently re-verifies each one
+   * (`studioClient.verifyCheckpoint`) rather than trusting the list
+   * response at face value — the whole point of a verify endpoint is that
+   * a checkpoint's trust posture is recomputed, not cached from creation
+   * time.
+   */
+  async function loadCheckpoints(projectId: string) {
+    try {
+      const loaded = await studioClient.listCheckpoints(projectId);
+      setCheckpoints(loaded);
+      const evaluations = await Promise.all(
+        loaded.map(async (checkpoint) => [checkpoint.id, await studioClient.verifyCheckpoint(projectId, checkpoint.id)] as const),
+      );
+      setCheckpointEvaluations(Object.fromEntries(evaluations));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not load evidence checkpoints.');
+    }
+  }
+
   useEffect(() => {
     void loadProjects();
   }, []);
@@ -76,7 +103,10 @@ export function LiveStudio() {
     setSelectedProjectId(projectId);
     setSelectedAssetId(undefined);
     setActionError(undefined);
+    setCheckpoints([]);
+    setCheckpointEvaluations({});
     void loadSnapshot(projectId);
+    void loadCheckpoints(projectId);
   }
 
   async function handleCreateProject(input: { ownerProfileId: string; title: string; projectType: string }) {
@@ -142,6 +172,46 @@ export function LiveStudio() {
     }
   }
 
+  async function handleEndSession(sessionId: string) {
+    if (selectedProjectId === undefined) {
+      return;
+    }
+    setEndingSession(true);
+    setActionError(undefined);
+    try {
+      await studioClient.endSession(selectedProjectId, sessionId);
+      // Ending a session may automatically cut a session_end checkpoint
+      // (see checkpointPolicy.ts) — reload both so the timeline reflects it.
+      await loadSnapshot(selectedProjectId);
+      await loadCheckpoints(selectedProjectId);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not end that session.');
+    } finally {
+      setEndingSession(false);
+    }
+  }
+
+  async function handleCreateCheckpoint() {
+    if (selectedProjectId === undefined || snapshot === undefined) {
+      return;
+    }
+    const activeSession = [...snapshot.sessions].reverse().find((s) => s.status === 'active') ?? snapshot.sessions.at(-1);
+    if (activeSession === undefined) {
+      setActionError('Start a session before creating a checkpoint.');
+      return;
+    }
+    setCreatingCheckpoint(true);
+    setActionError(undefined);
+    try {
+      await studioClient.createCheckpoint(selectedProjectId, activeSession.id, { actorProfileId });
+      await loadCheckpoints(selectedProjectId);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not create a checkpoint.');
+    } finally {
+      setCreatingCheckpoint(false);
+    }
+  }
+
   if (serviceError !== undefined) {
     return (
       <div className="card" style={{ margin: 'var(--space-6)' }}>
@@ -204,6 +274,8 @@ export function LiveStudio() {
                   ingesting={ingesting}
                   selectedAssetId={selectedAssetId}
                   onSelectAsset={setSelectedAssetId}
+                  onEndSession={(sessionId) => void handleEndSession(sessionId)}
+                  endingSession={endingSession}
                 />
 
                 <ContributorClaimPanel
@@ -213,9 +285,17 @@ export function LiveStudio() {
                   adding={addingClaim}
                 />
 
+                <EvidenceTimeline
+                  checkpoints={checkpoints}
+                  evaluations={checkpointEvaluations}
+                  onCreateCheckpoint={() => void handleCreateCheckpoint()}
+                  creating={creatingCheckpoint}
+                  canCreate={snapshot.sessions.length > 0}
+                />
+
                 <div className="card">
                   <p className="card__title">Activity</p>
-                  <ActivityFeed entries={buildLiveActivityFeed(snapshot)} />
+                  <ActivityFeed entries={buildLiveActivityFeed(snapshot, checkpoints)} />
                 </div>
               </div>
 

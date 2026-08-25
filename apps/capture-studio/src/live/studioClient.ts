@@ -15,6 +15,8 @@ import type { StudioSession } from '../../../../src/domain/studioSession.js';
 import type { ProjectAsset } from '../../../../src/domain/projectAsset.js';
 import type { ContributorReference } from '../../../../src/domain/contributorReference.js';
 import type { ProvenanceEvent } from '../../../../src/domain/provenanceEvent.js';
+import type { ProvenanceCheckpoint } from '../../../../src/domain/provenanceCheckpoint.js';
+import type { CheckpointTrustEvaluation } from '../../../../src/trust/checkpointTrust.js';
 
 const BASE_URL: string =
   (import.meta.env['VITE_STUDIO_SERVICE_URL'] as string | undefined) ?? 'http://localhost:4756';
@@ -127,4 +129,46 @@ export async function addContributorClaim(
     body: JSON.stringify(input),
   });
   return parseJsonOrThrow<ContributorReference>(res);
+}
+
+export async function endSession(projectId: string, sessionId: string): Promise<StudioSession> {
+  const res = await fetch(
+    `${BASE_URL}/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/end`,
+    { method: 'POST' },
+  );
+  return parseJsonOrThrow<StudioSession>(res);
+}
+
+export interface CreateCheckpointInput {
+  readonly actorProfileId: string;
+  readonly triggerType?: string;
+}
+
+export async function createCheckpoint(
+  projectId: string,
+  sessionId: string,
+  input: CreateCheckpointInput,
+): Promise<ProvenanceCheckpoint> {
+  const res = await fetch(
+    `${BASE_URL}/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/checkpoints`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  return parseJsonOrThrow<ProvenanceCheckpoint>(res);
+}
+
+export async function listCheckpoints(projectId: string): Promise<ProvenanceCheckpoint[]> {
+  const res = await fetch(`${BASE_URL}/projects/${encodeURIComponent(projectId)}/checkpoints`);
+  return parseJsonOrThrow<ProvenanceCheckpoint[]>(res);
+}
+
+export async function verifyCheckpoint(projectId: string, checkpointId: string): Promise<CheckpointTrustEvaluation> {
+  const res = await fetch(
+    `${BASE_URL}/projects/${encodeURIComponent(projectId)}/checkpoints/${encodeURIComponent(checkpointId)}/verify`,
+    { method: 'POST' },
+  );
+  return parseJsonOrThrow<CheckpointTrustEvaluation>(res);
 }

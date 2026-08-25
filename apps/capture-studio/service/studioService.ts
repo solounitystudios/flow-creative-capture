@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   asAssetId,
+  asCheckpointId,
   asContributionClaimId,
   asDeviceId,
   asEventId,
@@ -13,20 +14,34 @@ import {
   asSessionId,
 } from '../../../src/domain/ids.js';
 import type { ProjectId } from '../../../src/domain/ids.js';
-import { SOURCE_TYPES, type Platform, type ProjectStatus, type ProjectType, type SourceType } from '../../../src/domain/enums.js';
+import {
+  CHECKPOINT_TRIGGER_TYPES,
+  SOURCE_TYPES,
+  type CheckpointTriggerType,
+  type Platform,
+  type ProjectStatus,
+  type ProjectType,
+  type SourceType,
+} from '../../../src/domain/enums.js';
 import { createCreativeProject, type CreativeProject } from '../../../src/domain/creativeProject.js';
 import { createStudioDevice } from '../../../src/domain/studioDevice.js';
-import { createStudioSession, type StudioSession } from '../../../src/domain/studioSession.js';
+import { createStudioSession, endStudioSession, type StudioSession } from '../../../src/domain/studioSession.js';
 import { createProvenanceEvent, type ProvenanceEvent } from '../../../src/domain/provenanceEvent.js';
 import { createProjectAsset, type ProjectAsset } from '../../../src/domain/projectAsset.js';
 import { createContributorReference, type ContributorReference } from '../../../src/domain/contributorReference.js';
 import { CONTRIBUTION_ROLES, type ContributionRole } from '../../../src/domain/roles.js';
+import type { ProvenanceCheckpoint } from '../../../src/domain/provenanceCheckpoint.js';
 import { hashBytes } from '../../../src/crypto/sha256.js';
 import { createDeviceIdentity, loadDeviceIdentity, type DeviceIdentity } from '../../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../../src/device/keyStore.js';
+import { signProvenanceCheckpoint } from '../../../src/device/checkpointSigning.js';
+import { createCheckpointFromManifest, validateCheckpointChain } from '../../../src/provenance/checkpoint.js';
+import type { CheckpointManifestAssetEntry } from '../../../src/provenance/manifest.js';
 import { LocalEvidenceStore } from '../../../src/store/evidenceStore.js';
+import { evaluateStoredCheckpointTrust, type CheckpointTrustEvaluation } from '../../../src/trust/checkpointTrust.js';
 import { detectAssetType } from './mediaType.js';
-import { badRequest, notFound } from './errors.js';
+import { shouldAutoCheckpointOnSessionEnd } from './checkpointPolicy.js';
+import { badRequest, notFound, StudioServiceError } from './errors.js';
 
 /**
  * Capture Studio V1's local Studio service boundary.
@@ -51,12 +66,20 @@ import { badRequest, notFound } from './errors.js';
  * caller-supplied strings, exactly as the domain model already treats
  * them — this service does not invent an identity system on top.
  *
- * No signed batch is created by this service. Capture Studio V1's write
- * path persists real sessions/events/assets/contributor claims through
- * the real engine, but stops short of checkpoint/batch assembly and
- * signing — those remain a separate, later capability over the same
- * store, exactly like any other `LocalEvidenceStore` consumer. See the
- * final implementation report for why this line was drawn here.
+ * Capture Studio V2 (Live Signed Evidence Checkpoints) adds the checkpoint
+ * write path V1 deliberately stopped short of: `createCheckpoint` builds a
+ * `CheckpointManifest` from this project's currently known assets and the
+ * events captured since the previous checkpoint, derives the checkpoint
+ * hash (chained to the project's previous checkpoint via
+ * `previousCheckpointHash`), signs it with this service's own persistent
+ * `DeviceIdentity` (`signProvenanceCheckpoint`), and persists the signed
+ * record. `endSession` automatically cuts a `session_end` checkpoint when
+ * there is new evidence to close out (`checkpointPolicy.ts` — the ONE
+ * centralized, testable trigger decision this service makes on its own;
+ * every other checkpoint is caller-requested). No batch assembly/signing
+ * is added by V2 — checkpoints are the live-signed-evidence unit this pass
+ * implements; `ProvenanceBatch` remains available at the store/engine
+ * layer for a future offline-capture capability, unused by this service.
  */
 
 const LOCAL_DEVICE_ID = asDeviceId('device-capture-studio-local');
@@ -110,6 +133,11 @@ export interface AddContributorClaimInput {
   readonly role: string;
   readonly subrole?: string;
   readonly description?: string;
+}
+
+export interface CreateCheckpointInput {
+  readonly actorProfileId: string;
+  readonly triggerType?: string;
 }
 
 export class StudioService {
@@ -189,11 +217,23 @@ export class StudioService {
     const sessions = this.store.listSessionsForProject(projectId);
     const assets = this.store.listProjectAssetsForProject(projectId);
     const contributorClaims = this.store.listContributorReferencesForProject(projectId);
-    const events = sessions
-      .flatMap((session) => this.store.listEventsForSession(session.id))
-      .sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1 : a.eventId < b.eventId ? -1 : 1));
+    const events = this.listProjectEventsSorted(projectId, sessions);
 
     return { project, sessions, assets, contributorClaims, events };
+  }
+
+  /**
+   * All of a project's events, across all of its sessions, in chronological
+   * order (occurredAt, then eventId as a deterministic tiebreaker) — the
+   * same ordering rule `getProjectSnapshot` already used. Shared with
+   * `createCheckpoint`, which needs exactly this to compute a checkpoint's
+   * event boundary (the events folded in since the previous checkpoint).
+   */
+  private listProjectEventsSorted(projectId: ProjectId, sessions?: readonly StudioSession[]): ProvenanceEvent[] {
+    const projectSessions = sessions ?? this.store.listSessionsForProject(projectId);
+    return projectSessions
+      .flatMap((session) => this.store.listEventsForSession(session.id))
+      .sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : a.occurredAt > b.occurredAt ? 1 : a.eventId < b.eventId ? -1 : 1));
   }
 
   private requireProject(projectIdRaw: string): ProjectId {
@@ -240,6 +280,70 @@ export class StudioService {
 
     this.store.insertEvidenceBundle({ session, events: [sessionStarted], storedAt: now });
     return session;
+  }
+
+  /**
+   * Ends a session and records the ending event. Deliberately NOT wrapped
+   * in `insertEvidenceBundle`'s atomic grouping — `store.endSession` writes
+   * to the separate, exactly-once `session_ends` table (see schema.ts),
+   * the same "terminal transition as its own fact table" posture
+   * `revokeDevice` already has, and `addContributorClaim` already
+   * establishes the precedent of a session-adjacent write plus its event
+   * happening sequentially rather than transactionally here.
+   *
+   * After ending, applies Capture Studio V2's ONE automatic checkpoint
+   * trigger (`checkpointPolicy.ts`'s `shouldAutoCheckpointOnSessionEnd`):
+   * if there is new evidence since the project's previous checkpoint, a
+   * `session_end`-triggered signed checkpoint is cut. This keeps the
+   * policy decision centralized and testable rather than inlined here.
+   */
+  endSession(projectIdRaw: string, sessionIdRaw: string): StudioSession {
+    const projectId = this.requireProject(projectIdRaw);
+    const session = this.requireSessionInProject(projectId, sessionIdRaw);
+    const now = new Date().toISOString();
+
+    // Domain-level validation (rejects double-ending, endedAt < startedAt)
+    // happens here, through the same factory every other transition in
+    // this codebase goes through — the store write below only persists
+    // what this already validated. `endStudioSession` always produces
+    // status 'ended'; 'abandoned' has no caller-facing trigger in V1/V2.
+    endStudioSession(session, now);
+
+    // Decide whether there is new evidence worth an automatic checkpoint
+    // BEFORE recording the session_ended event itself — the lifecycle
+    // marker for "this session ended" must never itself count as the
+    // "new evidence" that justifies cutting a checkpoint, or every
+    // session end would trigger one regardless of whether anything was
+    // actually captured.
+    const previousCheckpoint = this.store.listCheckpointsForProject(projectId).at(-1);
+    const pendingEventCount = this.eventsFoldedIntoNextCheckpoint(projectId, previousCheckpoint).length;
+    const shouldCheckpoint = shouldAutoCheckpointOnSessionEnd(pendingEventCount);
+
+    this.store.endSession(session.id, now, 'ended', now);
+    const sessionEndedEvent = createProvenanceEvent({
+      eventId: asEventId(randomUUID()),
+      projectId,
+      sessionId: session.id,
+      actorProfileId: session.actorProfileId,
+      deviceId: this.deviceIdentity.deviceId,
+      source: 'capture_studio',
+      eventType: 'session_ended',
+      occurredAt: now,
+    });
+    this.store.insertEvent(sessionEndedEvent, now);
+
+    if (shouldCheckpoint) {
+      this.createCheckpoint(projectIdRaw, sessionIdRaw, {
+        actorProfileId: session.actorProfileId,
+        triggerType: 'session_end',
+      });
+    }
+
+    const ended = this.store.getSession(session.id);
+    if (ended === undefined) {
+      throw notFound(`Session ${sessionIdRaw} was not found in project ${projectIdRaw}`);
+    }
+    return ended;
   }
 
   // ---- Asset ingestion ------------------------------------------------------
@@ -327,6 +431,114 @@ export class StudioService {
 
     return claim;
   }
+
+  // ---- Checkpoints (Capture Studio V2 — Live Signed Evidence Checkpoints) ---
+
+  /**
+   * The project's events folded into the NEXT checkpoint: everything
+   * after `previous`'s `createdAt` (all project events if there is no
+   * previous checkpoint yet), in the same chronological order
+   * `listProjectEventsSorted` already establishes — never reordered, per
+   * PROVENANCE_SPEC.md §6 ("eventIds order is semantic... never sorted").
+   */
+  private eventsFoldedIntoNextCheckpoint(projectId: ProjectId, previous: ProvenanceCheckpoint | undefined): ProvenanceEvent[] {
+    const allEvents = this.listProjectEventsSorted(projectId);
+    return previous === undefined ? allEvents : allEvents.filter((event) => event.occurredAt > previous.createdAt);
+  }
+
+  /**
+   * Creates a real, live signed checkpoint from this project's current
+   * state: a `CheckpointManifest` built from the project's currently known
+   * assets (`ProjectAsset` rows) and the events captured since the
+   * project's previous checkpoint (project-WIDE chaining — see this
+   * method's own sequence/previousCheckpointHash derivation below, always
+   * scoped to `projectId`, never to one session; a checkpoint therefore
+   * can never link to another project's checkpoint, by construction). The
+   * checkpoint is signed with this service's own persistent
+   * `DeviceIdentity` before ever being persisted, so there is no
+   * checkpoint-without-signature intermediate state to leave orphaned —
+   * `signature` is a column on the same row `insertEvidenceBundle` writes
+   * atomically, not a separate write that could fail independently.
+   */
+  createCheckpoint(projectIdRaw: string, sessionIdRaw: string, input: CreateCheckpointInput): ProvenanceCheckpoint {
+    const projectId = this.requireProject(projectIdRaw);
+    const session = this.requireSessionInProject(projectId, sessionIdRaw);
+    const actorProfileId = asProfileId(input.actorProfileId);
+    const triggerType = validateCheckpointTriggerType(input.triggerType);
+    const now = new Date().toISOString();
+
+    const existingCheckpoints = this.store.listCheckpointsForProject(projectId);
+    const previous = existingCheckpoints.at(-1);
+    const sequence = previous !== undefined ? previous.sequence + 1 : 0;
+
+    const assets = this.store.listProjectAssetsForProject(projectId);
+    const manifestAssets: CheckpointManifestAssetEntry[] = assets.map((asset) => ({
+      assetId: asset.id,
+      sha256: asset.sha256,
+      assetType: asset.assetType,
+    }));
+    const eventIds = this.eventsFoldedIntoNextCheckpoint(projectId, previous).map((event) => event.eventId);
+
+    const unsigned = createCheckpointFromManifest({
+      id: asCheckpointId(randomUUID()),
+      projectId,
+      sessionId: session.id,
+      actorProfileId,
+      deviceId: this.deviceIdentity.deviceId,
+      sequence,
+      ...(previous !== undefined ? { previousCheckpointHash: previous.checkpointHash } : {}),
+      manifest: { projectId, assets: manifestAssets, eventIds },
+      triggerType,
+      createdAt: now,
+    });
+
+    // Defense in depth: confirm the freshly built checkpoint actually
+    // extends the project's existing chain validly before ever persisting
+    // it — "detect and reject inconsistent sequence/hash state" (V2
+    // mission brief), even though sequence/previousCheckpointHash above
+    // are always derived from the store's own current state in this
+    // single-writer local service, so this should never actually fail in
+    // practice; it is a cheap, explicit guard rather than an assumption.
+    const chainCheck = validateCheckpointChain([...existingCheckpoints, unsigned]);
+    if (!chainCheck.valid) {
+      throw new StudioServiceError(`Refusing to create an inconsistent checkpoint: ${chainCheck.errors.join('; ')}`, 409);
+    }
+
+    const signed = signProvenanceCheckpoint(unsigned, this.deviceIdentity);
+    this.store.insertEvidenceBundle({ checkpoint: signed, storedAt: now });
+    return signed;
+  }
+
+  listCheckpoints(projectIdRaw: string): ProvenanceCheckpoint[] {
+    const projectId = this.requireProject(projectIdRaw);
+    return this.store.listCheckpointsForProject(projectId);
+  }
+
+  getCheckpoint(projectIdRaw: string, checkpointIdRaw: string): ProvenanceCheckpoint {
+    const projectId = this.requireProject(projectIdRaw);
+    const checkpoint = this.store.getCheckpoint(asCheckpointId(checkpointIdRaw));
+    if (checkpoint === undefined || checkpoint.projectId !== projectId) {
+      throw notFound(`Checkpoint ${checkpointIdRaw} was not found in project ${projectIdRaw}`);
+    }
+    return checkpoint;
+  }
+
+  /**
+   * Independently verifies a persisted checkpoint's manifest hash,
+   * signature, chain linkage, sequence, and signing-device trust —
+   * without ever touching private key material (`evaluateStoredCheckpointTrust`
+   * reads only the device's stored PUBLIC key). See `src/trust/
+   * checkpointTrust.ts` for the returned `CheckpointTrustEvaluation`'s
+   * exact status/reason vocabulary.
+   */
+  verifyCheckpoint(projectIdRaw: string, checkpointIdRaw: string): CheckpointTrustEvaluation {
+    const checkpoint = this.getCheckpoint(projectIdRaw, checkpointIdRaw);
+    const evaluation = evaluateStoredCheckpointTrust(this.store, checkpoint.id);
+    if (evaluation === undefined) {
+      throw notFound(`Checkpoint ${checkpointIdRaw} was not found`);
+    }
+    return evaluation;
+  }
 }
 
 function validateSourceType(raw: string | undefined): SourceType {
@@ -357,6 +569,16 @@ function validateContributionRole(raw: string): ContributionRole {
     throw badRequest(`role "${raw}" is not recognized`);
   }
   return raw as ContributionRole;
+}
+
+function validateCheckpointTriggerType(raw: string | undefined): CheckpointTriggerType {
+  if (raw === undefined) {
+    return 'manual';
+  }
+  if (!(CHECKPOINT_TRIGGER_TYPES as readonly string[]).includes(raw)) {
+    throw badRequest(`triggerType "${raw}" is not recognized`);
+  }
+  return raw as CheckpointTriggerType;
 }
 
 function createLocalDeviceRecord(identity: DeviceIdentity, verifiedAt: string) {

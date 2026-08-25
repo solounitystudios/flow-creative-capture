@@ -11,6 +11,7 @@ import type { ContributorReference } from '../domain/contributorReference.js';
 import type { ProjectAsset } from '../domain/projectAsset.js';
 import { validateCheckpointChain, type CheckpointChainValidationResult } from '../provenance/checkpoint.js';
 import { verifySignedBatch, type BatchVerificationResult } from '../device/batchSigning.js';
+import { verifySignedCheckpoint, type CheckpointVerificationResult } from '../device/checkpointSigning.js';
 import { closeEvidenceDatabase, isUniqueConstraintError, openEvidenceDatabase, withTransaction } from './database.js';
 import { CURRENT_SCHEMA_VERSION } from './schema.js';
 import { StoreConflictError } from './errors.js';
@@ -291,6 +292,27 @@ export class LocalEvidenceStore {
    */
   verifyCheckpointChainForProject(projectId: ProjectId): CheckpointChainValidationResult {
     return validateCheckpointChain(this.listCheckpointsForProject(projectId));
+  }
+
+  /**
+   * Readback integrity check: reconstructs the stored checkpoint and hands
+   * it, unmodified, to the existing `verifySignedCheckpoint` — this store
+   * never reimplements signature verification, mirroring
+   * `verifyBatchSignature` exactly.
+   */
+  verifyCheckpointSignature(checkpointId: CheckpointId, signerPublicKeySpkiDer: Buffer): CheckpointVerificationResult | undefined {
+    const checkpoint = this.getCheckpoint(checkpointId);
+    return checkpoint === undefined ? undefined : verifySignedCheckpoint(checkpoint, signerPublicKeySpkiDer);
+  }
+
+  /** Convenience form of `verifyCheckpointSignature` using the signing device's own stored public key. */
+  verifyCheckpointSignatureUsingStoredDeviceKey(checkpointId: CheckpointId): CheckpointVerificationResult | undefined {
+    const checkpoint = this.getCheckpoint(checkpointId);
+    if (checkpoint === undefined) {
+      return undefined;
+    }
+    const publicKey = this.getDevicePublicKey(checkpoint.deviceId);
+    return publicKey === undefined ? undefined : verifySignedCheckpoint(checkpoint, publicKey);
   }
 
   // ---- Batches --------------------------------------------------------------

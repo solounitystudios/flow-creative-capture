@@ -56,6 +56,24 @@
  * unrelated, breaking schema change to four already-shipped tables rather
  * than the minimum addition this version actually needs.
  *
+ * V5 (Capture Studio V2 — Live Signed Evidence Checkpoints) adds exactly
+ * two new columns to the existing `checkpoints` table: `deviceId TEXT NOT
+ * NULL REFERENCES devices(id)` and `signature TEXT`. This mirrors
+ * `batches.deviceId`/`batches.signature` exactly (see `src/device/
+ * checkpointSigning.ts`) — a checkpoint can now be produced by an
+ * identified device and optionally carry an Ed25519 signature over its own
+ * fields, verified the same way a signed batch already is. No other table
+ * changes: the v4 schema already had everything else V2 needs (project
+ * assets, contributor claims, the checkpoint hash chain itself) — see
+ * ARCHITECTURE.md/AGENTS.md's "inspect before changing" principle; this
+ * addition was scoped to exactly what live signed checkpoints require,
+ * nothing broader. `checkpoints.signature` is nullable (an unsigned
+ * checkpoint remains a valid, hash-chained record, same posture as
+ * `batches.signature`); `checkpoints.deviceId` is NOT nullable, because
+ * every live checkpoint (signed or not) is always recorded by some device —
+ * unlike `signature`, there is no meaningful "checkpoint recorded by no
+ * device" state to represent.
+ *
  * **Backward compatibility.** This store has no migration engine (see
  * `database.ts`'s `UnsupportedSchemaVersionError` — an existing database
  * with a different schema version is always rejected outright, never
@@ -123,9 +141,9 @@
  * proving this.
  */
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
-export const SCHEMA_V4_DDL = `
+export const SCHEMA_V5_DDL = `
 CREATE TABLE schema_version (
   version INTEGER NOT NULL
 );
@@ -208,10 +226,12 @@ CREATE TABLE checkpoints (
   workReference TEXT,
   sessionId TEXT NOT NULL REFERENCES sessions(id),
   actorProfileId TEXT NOT NULL,
+  deviceId TEXT NOT NULL REFERENCES devices(id),
   sequence INTEGER NOT NULL,
   previousCheckpointHash TEXT,
   manifestHash TEXT NOT NULL,
   checkpointHash TEXT NOT NULL,
+  signature TEXT,
   triggerType TEXT NOT NULL,
   createdAt TEXT NOT NULL,
   storedAt TEXT NOT NULL

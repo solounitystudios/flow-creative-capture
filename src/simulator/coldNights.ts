@@ -157,6 +157,7 @@ export function runColdNightsScenario(seedTimestamp = '2026-01-05T18:00:00.000Z'
   function cutCheckpoint(
     sessionId: StudioSession['id'],
     actorProfileId: CreativeProject['ownerProfileId'],
+    deviceId: StudioDevice['id'],
     triggerType: Parameters<typeof createCheckpointFromManifest>[0]['triggerType'],
   ): ProvenanceCheckpoint {
     const checkpoint = createCheckpointFromManifest({
@@ -165,6 +166,7 @@ export function runColdNightsScenario(seedTimestamp = '2026-01-05T18:00:00.000Z'
       workReference: workReference.id,
       sessionId,
       actorProfileId,
+      deviceId,
       sequence: checkpointSequence,
       ...(previousCheckpointHash !== undefined ? { previousCheckpointHash } : {}),
       manifest: { projectId: project.id, assets: [...manifestAssets], eventIds: [...manifestEventIds] },
@@ -280,7 +282,7 @@ export function runColdNightsScenario(seedTimestamp = '2026-01-05T18:00:00.000Z'
   );
 
   // --- 6. Checkpoint #1 -------------------------------------------------------
-  const checkpoint1 = cutCheckpoint(nightwireSession.id, nightwireProfileId, 'recording_batch');
+  const checkpoint1 = cutCheckpoint(nightwireSession.id, nightwireProfileId, nightwireDevice.id, 'recording_batch');
   recordEvent(
     createProvenanceEvent({
       eventId: asEventId('event-checkpoint-1'),
@@ -477,7 +479,7 @@ export function runColdNightsScenario(seedTimestamp = '2026-01-05T18:00:00.000Z'
   );
 
   // --- 13. Checkpoint #2 --------------------------------------------------------
-  const checkpoint2 = cutCheckpoint(marcusSession.id, marcusProfileId, 'recording_batch');
+  const checkpoint2 = cutCheckpoint(marcusSession.id, marcusProfileId, marcusDevice.id, 'recording_batch');
   recordEvent(
     createProvenanceEvent({
       eventId: asEventId('event-checkpoint-2'),
@@ -599,7 +601,7 @@ export function runColdNightsScenario(seedTimestamp = '2026-01-05T18:00:00.000Z'
   );
 
   // Checkpoint #3 captures the final-mix/final-master state.
-  const checkpoint3 = cutCheckpoint(marcusSession.id, marcusProfileId, 'final_master');
+  const checkpoint3 = cutCheckpoint(marcusSession.id, marcusProfileId, marcusDevice.id, 'final_master');
   recordEvent(
     createProvenanceEvent({
       eventId: asEventId('event-checkpoint-3'),

@@ -46,7 +46,7 @@ describe('openEvidenceDatabase — fresh / reopen / version handling', () => {
     const db = openEvidenceDatabase(path);
     const row = db.prepare('SELECT version FROM schema_version').get() as { version: number };
     expect(row.version).toBe(CURRENT_SCHEMA_VERSION);
-    expect(row.version).toBe(4);
+    expect(row.version).toBe(5);
     closeEvidenceDatabase(db);
   });
 
@@ -746,7 +746,7 @@ describe('openEvidenceDatabase — schema v3 -> v4 "upgrade" is a safe rejection
     // to keep the full v3 -> v4 narrative in one place.
     const freshPath = makeDbPath();
     const db = openEvidenceDatabase(freshPath);
-    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(4);
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(5);
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
     for (const expectedTable of ['projects', 'devices', 'sessions', 'events', 'checkpoints', 'batches', 'contributor_references', 'project_assets']) {
       expect(tables.map((t) => t.name)).toContain(expectedTable);
@@ -796,6 +796,229 @@ describe('openEvidenceDatabase — pre-projects (schema version 3) database reje
     verify.close();
   });
 });
+
+describe('openEvidenceDatabase — pre-checkpoint-signing (schema version 4) database rejection', () => {
+  it('rejects a pre-checkpoint-signing (schema version 4) database safely', () => {
+    const path = makeDbPath();
+
+    // Build a genuine v4-shaped database: `checkpoints` has no deviceId/
+    // signature columns, no migration engine involved — just the
+    // historical V4 DDL, exactly as a real pre-Capture-Studio-V2 install
+    // would have on disk.
+    const v4 = new DatabaseSync(path);
+    v4.exec(SCHEMA_V4_DDL);
+    v4.prepare('INSERT INTO schema_version (version) VALUES (?)').run(4);
+    v4.prepare(
+      'INSERT INTO devices (id, profileId, devicePublicId, platform, appVersion, deviceKeyFingerprint, publicKeySpkiDer, storedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('device-1', 'profile-1', 'pub-1', 'macos', '1.0.0', 'f'.repeat(64), 'AAAA', '2026-01-01T00:00:00.000Z');
+    v4.close();
+
+    // Confirm the fixture really is schema version 4, with an un-signable
+    // checkpoints table, before touching it with current code.
+    const preCheck = new DatabaseSync(path);
+    expect((preCheck.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(4);
+    const checkpointColumns = preCheck.prepare('PRAGMA table_info(checkpoints)').all() as { name: string }[];
+    expect(checkpointColumns.map((c) => c.name)).not.toContain('deviceId');
+    expect(checkpointColumns.map((c) => c.name)).not.toContain('signature');
+    preCheck.close();
+
+    expect(() => openEvidenceDatabase(path)).toThrow(UnsupportedSchemaVersionError);
+
+    // No automatic upgrade: the historical database's schema and content
+    // are left exactly as they were, never silently migrated or rewritten
+    // to version 5.
+    const verify = new DatabaseSync(path);
+    expect((verify.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(4);
+    const postColumns = verify.prepare('PRAGMA table_info(checkpoints)').all() as { name: string }[];
+    expect(postColumns.map((c) => c.name)).not.toContain('deviceId');
+    const device = verify.prepare('SELECT * FROM devices WHERE id = ?').get('device-1');
+    expect(device).toBeDefined();
+    verify.close();
+  });
+});
+
+// The exact schema version 4 DDL from before Capture Studio V2 (Live
+// Signed Evidence Checkpoints) — recovered from git, not reconstructed
+// from memory — i.e. `checkpoints` before it carried `deviceId`/
+// `signature`. Used to build a genuine v4-shaped database fixture.
+const SCHEMA_V4_DDL = `
+CREATE TABLE schema_version (
+  version INTEGER NOT NULL
+);
+
+CREATE TABLE projects (
+  id TEXT PRIMARY KEY,
+  ownerProfileId TEXT NOT NULL,
+  organizationId TEXT,
+  externalProjectPassportId TEXT,
+  title TEXT NOT NULL,
+  projectType TEXT NOT NULL,
+  status TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  updatedAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+
+CREATE TABLE devices (
+  id TEXT PRIMARY KEY,
+  profileId TEXT NOT NULL,
+  devicePublicId TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  appVersion TEXT NOT NULL,
+  deviceKeyFingerprint TEXT NOT NULL,
+  publicKeySpkiDer TEXT NOT NULL,
+  verifiedAt TEXT,
+  storedAt TEXT NOT NULL
+);
+
+CREATE TABLE device_revocations (
+  deviceId TEXT PRIMARY KEY REFERENCES devices(id),
+  revokedAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+
+CREATE TABLE sessions (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  workReference TEXT,
+  actorProfileId TEXT NOT NULL,
+  deviceId TEXT NOT NULL REFERENCES devices(id),
+  daw TEXT NOT NULL,
+  dawVersion TEXT,
+  startedAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_sessions_project ON sessions(projectId);
+CREATE INDEX idx_sessions_device ON sessions(deviceId);
+
+CREATE TABLE session_ends (
+  sessionId TEXT PRIMARY KEY REFERENCES sessions(id),
+  endedAt TEXT NOT NULL,
+  status TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+
+CREATE TABLE events (
+  eventId TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  workReference TEXT,
+  sessionId TEXT NOT NULL REFERENCES sessions(id),
+  actorProfileId TEXT NOT NULL,
+  deviceId TEXT NOT NULL REFERENCES devices(id),
+  source TEXT NOT NULL,
+  eventType TEXT NOT NULL,
+  assetId TEXT,
+  trackReference TEXT,
+  occurredAt TEXT NOT NULL,
+  receivedAt TEXT,
+  payload TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_events_session ON events(sessionId);
+CREATE INDEX idx_events_project ON events(projectId);
+CREATE INDEX idx_events_asset ON events(assetId);
+
+CREATE TABLE checkpoints (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  workReference TEXT,
+  sessionId TEXT NOT NULL REFERENCES sessions(id),
+  actorProfileId TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  previousCheckpointHash TEXT,
+  manifestHash TEXT NOT NULL,
+  checkpointHash TEXT NOT NULL,
+  triggerType TEXT NOT NULL,
+  createdAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_checkpoints_project_seq ON checkpoints(projectId, sequence);
+
+CREATE TABLE batches (
+  id TEXT PRIMARY KEY,
+  profileId TEXT NOT NULL,
+  deviceId TEXT NOT NULL REFERENCES devices(id),
+  sessionId TEXT NOT NULL REFERENCES sessions(id),
+  eventCount INTEGER NOT NULL,
+  firstEventAt TEXT NOT NULL,
+  lastEventAt TEXT NOT NULL,
+  previousBatchHash TEXT,
+  manifestHash TEXT NOT NULL,
+  signature TEXT,
+  createdAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_batches_device ON batches(deviceId, createdAt);
+CREATE INDEX idx_batches_session ON batches(sessionId);
+
+CREATE TABLE batch_validation_state (
+  batchId TEXT PRIMARY KEY REFERENCES batches(id),
+  validationStatus TEXT NOT NULL,
+  statusAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+
+CREATE TABLE contributor_references (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  profileId TEXT NOT NULL,
+  role TEXT NOT NULL,
+  subrole TEXT,
+  description TEXT,
+  claimedAt TEXT NOT NULL,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_contributor_references_project ON contributor_references(projectId);
+
+CREATE TABLE project_assets (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  workReference TEXT,
+  createdByProfileId TEXT,
+  introducedBySessionId TEXT NOT NULL REFERENCES sessions(id),
+  assetType TEXT NOT NULL,
+  sourceType TEXT NOT NULL,
+  originalFilename TEXT,
+  sha256 TEXT NOT NULL,
+  sizeBytes INTEGER,
+  firstSeenAt TEXT NOT NULL,
+  originStatus TEXT NOT NULL,
+  rightsStatus TEXT,
+  storedAt TEXT NOT NULL
+);
+CREATE INDEX idx_project_assets_project ON project_assets(projectId);
+CREATE INDEX idx_project_assets_sha256 ON project_assets(sha256);
+
+CREATE TRIGGER trg_devices_no_update BEFORE UPDATE ON devices BEGIN SELECT RAISE(ABORT, 'devices is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_devices_no_delete BEFORE DELETE ON devices BEGIN SELECT RAISE(ABORT, 'devices is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_device_revocations_no_update BEFORE UPDATE ON device_revocations BEGIN SELECT RAISE(ABORT, 'device_revocations is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_device_revocations_no_delete BEFORE DELETE ON device_revocations BEGIN SELECT RAISE(ABORT, 'device_revocations is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_sessions_no_update BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'sessions is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_sessions_no_delete BEFORE DELETE ON sessions BEGIN SELECT RAISE(ABORT, 'sessions is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_session_ends_no_update BEFORE UPDATE ON session_ends BEGIN SELECT RAISE(ABORT, 'session_ends is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_session_ends_no_delete BEFORE DELETE ON session_ends BEGIN SELECT RAISE(ABORT, 'session_ends is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_events_no_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_events_no_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_checkpoints_no_update BEFORE UPDATE ON checkpoints BEGIN SELECT RAISE(ABORT, 'checkpoints is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_checkpoints_no_delete BEFORE DELETE ON checkpoints BEGIN SELECT RAISE(ABORT, 'checkpoints is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_batches_no_update BEFORE UPDATE ON batches BEGIN SELECT RAISE(ABORT, 'batches is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_batches_no_delete BEFORE DELETE ON batches BEGIN SELECT RAISE(ABORT, 'batches is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_contributor_references_no_update BEFORE UPDATE ON contributor_references BEGIN SELECT RAISE(ABORT, 'contributor_references is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_contributor_references_no_delete BEFORE DELETE ON contributor_references BEGIN SELECT RAISE(ABORT, 'contributor_references is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_project_assets_no_update BEFORE UPDATE ON project_assets BEGIN SELECT RAISE(ABORT, 'project_assets is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_project_assets_no_delete BEFORE DELETE ON project_assets BEGIN SELECT RAISE(ABORT, 'project_assets is append-only: rows cannot be deleted'); END;
+
+CREATE TRIGGER trg_projects_no_update BEFORE UPDATE ON projects BEGIN SELECT RAISE(ABORT, 'projects is append-only: rows cannot be updated'); END;
+CREATE TRIGGER trg_projects_no_delete BEFORE DELETE ON projects BEGIN SELECT RAISE(ABORT, 'projects is append-only: rows cannot be deleted'); END;
+`;
 
 describe('withTransaction', () => {
   it('commits durably on success', () => {

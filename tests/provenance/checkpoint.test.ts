@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { asCheckpointId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
+import { asCheckpointId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
 import { createCheckpointFromManifest, validateCheckpointChain } from '../../src/provenance/checkpoint.js';
 
 function chainOfTwo() {
   const projectId = asProjectId('p1');
   const sessionId = asSessionId('s1');
   const actorProfileId = asProfileId('actor1');
+  const deviceId = asDeviceId('device1');
 
   const checkpoint0 = createCheckpointFromManifest({
     id: asCheckpointId('c0'),
     projectId,
     sessionId,
     actorProfileId,
+    deviceId,
     sequence: 0,
     manifest: { projectId, assets: [], eventIds: [asEventId('e1')] },
     triggerType: 'manual',
@@ -23,6 +25,7 @@ function chainOfTwo() {
     projectId,
     sessionId,
     actorProfileId,
+    deviceId,
     sequence: 1,
     previousCheckpointHash: checkpoint0.checkpointHash,
     manifest: { projectId, assets: [], eventIds: [asEventId('e2')] },
