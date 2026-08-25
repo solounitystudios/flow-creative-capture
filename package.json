@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22.5.0"
   },
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
