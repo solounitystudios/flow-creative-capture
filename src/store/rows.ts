@@ -18,8 +18,9 @@ import { createProvenanceEvent, type ProvenanceEvent } from '../domain/provenanc
 import { createProvenanceCheckpoint, type ProvenanceCheckpoint } from '../domain/provenanceCheckpoint.js';
 import { createProvenanceBatch, type ProvenanceBatch } from '../domain/provenanceBatch.js';
 import { createContributorReference, type ContributorReference } from '../domain/contributorReference.js';
+import { createProjectAsset, type ProjectAsset } from '../domain/projectAsset.js';
 import type { ContributionRole } from '../domain/roles.js';
-import type { BatchValidationStatus } from '../domain/enums.js';
+import type { AssetType, BatchValidationStatus, OriginStatus, RightsVerificationStatus, SourceType } from '../domain/enums.js';
 
 /**
  * Row shapes exactly mirror the columns in schema.ts. Reconstruction always
@@ -332,5 +333,59 @@ export function rowToContributorReference(row: ContributorReferenceRow): Contrib
     ...(row.subrole !== null ? { subrole: row.subrole } : {}),
     ...(row.description !== null ? { description: row.description } : {}),
     claimedAt: row.claimedAt,
+  });
+}
+
+export interface ProjectAssetRow {
+  readonly id: string;
+  readonly projectId: string;
+  readonly workReference: string | null;
+  readonly createdByProfileId: string | null;
+  readonly introducedBySessionId: string;
+  readonly assetType: string;
+  readonly sourceType: string;
+  readonly originalFilename: string | null;
+  readonly sha256: string;
+  readonly sizeBytes: number | null;
+  readonly firstSeenAt: string;
+  readonly originStatus: string;
+  readonly rightsStatus: string | null;
+  readonly storedAt: string;
+}
+
+export function projectAssetToRow(asset: ProjectAsset, storedAt: string): ProjectAssetRow {
+  return {
+    id: asset.id,
+    projectId: asset.projectId,
+    workReference: asset.workReference ?? null,
+    createdByProfileId: asset.createdByProfileId ?? null,
+    introducedBySessionId: asset.introducedBySessionId,
+    assetType: asset.assetType,
+    sourceType: asset.sourceType,
+    originalFilename: asset.originalFilename ?? null,
+    sha256: asset.sha256,
+    sizeBytes: asset.sizeBytes ?? null,
+    firstSeenAt: asset.firstSeenAt,
+    originStatus: asset.originStatus,
+    rightsStatus: asset.rightsStatus ?? null,
+    storedAt,
+  };
+}
+
+export function rowToProjectAsset(row: ProjectAssetRow): ProjectAsset {
+  return createProjectAsset({
+    id: asAssetId(row.id),
+    projectId: asProjectId(row.projectId),
+    ...(row.workReference !== null ? { workReference: asWorkReferenceId(row.workReference) } : {}),
+    ...(row.createdByProfileId !== null ? { createdByProfileId: asProfileId(row.createdByProfileId) } : {}),
+    introducedBySessionId: asSessionId(row.introducedBySessionId),
+    assetType: row.assetType as AssetType,
+    sourceType: row.sourceType as SourceType,
+    ...(row.originalFilename !== null ? { originalFilename: row.originalFilename } : {}),
+    sha256: row.sha256,
+    ...(row.sizeBytes !== null ? { sizeBytes: row.sizeBytes } : {}),
+    firstSeenAt: row.firstSeenAt,
+    originStatus: row.originStatus as OriginStatus,
+    ...(row.rightsStatus !== null ? { rightsStatus: row.rightsStatus as RightsVerificationStatus } : {}),
   });
 }

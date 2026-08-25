@@ -12,6 +12,7 @@ import {
   asProfileId,
   asProjectId,
   asSessionId,
+  asWorkReferenceId,
 } from '../../src/domain/ids.js';
 import { createStudioDevice, isDeviceActive } from '../../src/domain/studioDevice.js';
 import { createStudioSession } from '../../src/domain/studioSession.js';
@@ -19,6 +20,7 @@ import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
 import { createProvenanceCheckpoint } from '../../src/domain/provenanceCheckpoint.js';
 import { createProvenanceBatch } from '../../src/domain/provenanceBatch.js';
 import { createContributorReference } from '../../src/domain/contributorReference.js';
+import { createProjectAsset } from '../../src/domain/projectAsset.js';
 import { createCheckpointFromManifest } from '../../src/provenance/checkpoint.js';
 import { closeEvidenceDatabase, openEvidenceDatabase } from '../../src/store/database.js';
 import { LocalEvidenceStore } from '../../src/store/evidenceStore.js';
@@ -104,6 +106,23 @@ function makeContributorClaim(
     role: 'producer',
     subrole: 'producer',
     claimedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  });
+}
+
+function makeProjectAsset(
+  id = 'asset-1',
+  projectId = 'project-1',
+  overrides: Partial<Parameters<typeof createProjectAsset>[0]> = {},
+) {
+  return createProjectAsset({
+    id: asAssetId(id),
+    projectId: asProjectId(projectId),
+    introducedBySessionId: asSessionId('session-1'),
+    assetType: 'audio',
+    sourceType: 'human_recorded',
+    sha256: 'a'.repeat(64),
+    firstSeenAt: '2026-01-01T00:04:00.000Z',
     ...overrides,
   });
 }
@@ -509,6 +528,144 @@ describe('LocalEvidenceStore — contributor references', () => {
   });
 });
 
+describe('LocalEvidenceStore — project assets', () => {
+  function seedSession(store: LocalEvidenceStore, sessionId = 'session-1') {
+    store.insertDevice(makeDevice(), FAKE_PUBLIC_KEY, '2026-01-01T00:00:00.000Z');
+    store.insertSession(makeSession(sessionId), '2026-01-01T00:00:00.000Z');
+  }
+
+  it('round-trips an asset with full metadata (workReference, createdByProfileId, originalFilename, sizeBytes, rightsStatus)', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    seedSession(store);
+    const asset = makeProjectAsset('asset-full', 'project-1', {
+      workReference: asWorkReferenceId('work-1'),
+      createdByProfileId: asProfileId('profile-1'),
+      originalFilename: 'guitar_lead_take.wav',
+      sizeBytes: 48_213_000,
+      originStatus: 'declared',
+      rightsStatus: 'claimed',
+    });
+    store.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+
+    const loaded = store.getProjectAsset(asset.id);
+    expect(loaded).toEqual(asset);
+    store.close();
+  });
+
+  it('round-trips an asset with every optional field omitted, never reconstructing them as null', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    seedSession(store);
+    const asset = makeProjectAsset('asset-bare');
+    store.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+
+    const loaded = store.getProjectAsset(asset.id);
+    expect(loaded).toEqual(asset);
+    expect('workReference' in (loaded ?? {})).toBe(false);
+    expect('createdByProfileId' in (loaded ?? {})).toBe(false);
+    expect('originalFilename' in (loaded ?? {})).toBe(false);
+    expect('sizeBytes' in (loaded ?? {})).toBe(false);
+    expect('rightsStatus' in (loaded ?? {})).toBe(false);
+    store.close();
+  });
+
+  it('returns undefined for an asset that was never inserted', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    expect(store.getProjectAsset(asAssetId('nope'))).toBeUndefined();
+    store.close();
+  });
+
+  it('duplicate insertion of the exact same asset is an idempotent no-op', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    seedSession(store);
+    const asset = makeProjectAsset();
+    const first = store.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+    const second = store.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+    expect(first).toEqual({ inserted: true });
+    expect(second).toEqual({ inserted: false, reason: 'duplicate' });
+    store.close();
+  });
+
+  it('a conflicting asset (same id, different content) throws and never overwrites the original', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    seedSession(store);
+    const original = makeProjectAsset('asset-x', 'project-1', { originalFilename: 'v1.wav' });
+    store.insertProjectAsset(original, '2026-01-01T00:05:00.000Z');
+
+    const conflicting = makeProjectAsset('asset-x', 'project-1', { originalFilename: 'v2.wav' });
+    expect(() => store.insertProjectAsset(conflicting, '2026-01-01T00:05:00.000Z')).toThrow(StoreConflictError);
+    expect(store.getProjectAsset(asAssetId('asset-x'))?.originalFilename).toBe('v1.wav');
+    store.close();
+  });
+
+  it('lists a project\'s assets ordered by firstSeenAt (rowid as tiebreaker), never another project\'s assets', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    seedSession(store);
+
+    const midi = makeProjectAsset('asset-midi', 'project-cold-nights', { firstSeenAt: '2026-01-05T18:05:00.000Z' });
+    const stem = makeProjectAsset('asset-stem', 'project-cold-nights', { firstSeenAt: '2026-01-05T18:10:00.000Z' });
+    const guitar = makeProjectAsset('asset-guitar', 'project-cold-nights', { firstSeenAt: '2026-01-06T09:00:00.000Z' });
+    const otherProjectAsset = makeProjectAsset('asset-other', 'project-other-song', {
+      firstSeenAt: '2026-01-05T18:00:00.000Z',
+    });
+
+    // Inserted out of chronological order on purpose, interleaved with a different project's asset.
+    store.insertProjectAsset(stem, '2026-01-05T18:15:00.000Z');
+    store.insertProjectAsset(otherProjectAsset, '2026-01-05T18:16:00.000Z');
+    store.insertProjectAsset(guitar, '2026-01-06T09:05:00.000Z');
+    store.insertProjectAsset(midi, '2026-01-05T18:17:00.000Z');
+
+    const coldNightsAssets = store.listProjectAssetsForProject(asProjectId('project-cold-nights'));
+    expect(coldNightsAssets.map((a) => a.id)).toEqual(['asset-midi', 'asset-stem', 'asset-guitar']);
+    expect(coldNightsAssets).toEqual([midi, stem, guitar]);
+
+    const otherProjectAssets = store.listProjectAssetsForProject(asProjectId('project-other-song'));
+    expect(otherProjectAssets.map((a) => a.id)).toEqual(['asset-other']);
+
+    // Never leaks across projects in either direction.
+    expect(coldNightsAssets.some((a) => a.id === otherProjectAsset.id)).toBe(false);
+    expect(otherProjectAssets.some((a) => a.projectId === midi.projectId)).toBe(false);
+
+    store.close();
+  });
+
+  it('returns an empty list for a project with no assets', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    expect(store.listProjectAssetsForProject(asProjectId('no-assets-here'))).toEqual([]);
+    store.close();
+  });
+
+  it('allows the exact same sha256 to appear under multiple distinct asset ids — duplicate content is not a conflict', () => {
+    const store = new LocalEvidenceStore(makeDbPath());
+    seedSession(store);
+    const sharedHash = 'd'.repeat(64);
+    const purchased = makeProjectAsset('asset-sample-purchase-1', 'project-1', { sha256: sharedHash });
+    const reused = makeProjectAsset('asset-sample-purchase-2', 'project-1', { sha256: sharedHash });
+
+    expect(store.insertProjectAsset(purchased, '2026-01-01T00:05:00.000Z')).toEqual({ inserted: true });
+    expect(store.insertProjectAsset(reused, '2026-01-01T00:05:01.000Z')).toEqual({ inserted: true });
+    expect(store.getProjectAsset(purchased.id)?.sha256).toBe(sharedHash);
+    expect(store.getProjectAsset(reused.id)?.sha256).toBe(sharedHash);
+    store.close();
+  });
+
+  it('an asset survives a store close/reopen at the same path', () => {
+    const path = makeDbPath();
+    const first = new LocalEvidenceStore(path);
+    seedSession(first);
+    const asset = makeProjectAsset('asset-durable', 'project-1', {
+      createdByProfileId: asProfileId('profile-1'),
+      originalFilename: 'cold_nights_final_master.wav',
+    });
+    first.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+    first.close();
+
+    const second = new LocalEvidenceStore(path);
+    expect(second.getProjectAsset(asset.id)).toEqual(asset);
+    expect(second.listProjectAssetsForProject(asProjectId('project-1')).map((a) => a.id)).toEqual(['asset-durable']);
+    second.close();
+  });
+});
+
 describe('LocalEvidenceStore — append-only enforcement (direct SQL against the persisted file)', () => {
   function reopenRaw(path: string) {
     return openEvidenceDatabase(path);
@@ -585,6 +742,20 @@ describe('LocalEvidenceStore — append-only enforcement (direct SQL against the
     const raw = reopenRaw(path);
     expect(() => raw.exec("UPDATE contributor_references SET role = 'musician'")).toThrow(/append-only/);
     expect(() => raw.exec('DELETE FROM contributor_references')).toThrow(/append-only/);
+    closeEvidenceDatabase(raw);
+  });
+
+  it('blocks UPDATE and DELETE on project_assets — a persisted asset record cannot be mutated or removed by rewriting the row', () => {
+    const path = makeDbPath();
+    const store = new LocalEvidenceStore(path);
+    store.insertDevice(makeDevice(), FAKE_PUBLIC_KEY, '2026-01-01T00:00:00.000Z');
+    store.insertSession(makeSession(), '2026-01-01T00:00:00.000Z');
+    store.insertProjectAsset(makeProjectAsset(), '2026-01-01T00:05:00.000Z');
+    store.close();
+
+    const raw = reopenRaw(path);
+    expect(() => raw.exec("UPDATE project_assets SET originalFilename = 'renamed.wav'")).toThrow(/append-only/);
+    expect(() => raw.exec('DELETE FROM project_assets')).toThrow(/append-only/);
     closeEvidenceDatabase(raw);
   });
 

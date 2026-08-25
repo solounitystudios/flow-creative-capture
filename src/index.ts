@@ -88,6 +88,7 @@ export { EvidenceBundleAssemblyError } from './evidence/errors.js';
 export type {
   BuildProjectDossierOptions,
   DossierActivity,
+  DossierAsset,
   DossierContributionClaim,
   DossierDisclaimers,
   DossierParticipant,

@@ -2,11 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { asBatchId, asContributionClaimId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
+import { asAssetId, asBatchId, asContributionClaimId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
 import { createStudioDevice } from '../../src/domain/studioDevice.js';
 import { createStudioSession } from '../../src/domain/studioSession.js';
 import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
 import { createContributorReference } from '../../src/domain/contributorReference.js';
+import { createProjectAsset } from '../../src/domain/projectAsset.js';
 import { createDeviceIdentity } from '../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../src/device/keyStore.js';
 import { signProvenanceBatch } from '../../src/device/batchSigning.js';
@@ -204,6 +205,7 @@ describe('buildDeliveryPackage — selective disclosure', () => {
     expect(pkg.omittedSections).toEqual([
       'participants',
       'contributorClaims',
+      'assets',
       'activity',
       'documentationProfile',
       'evidenceReferences',
@@ -305,6 +307,124 @@ describe('buildDeliveryPackage — contributor claims section', () => {
     }
     const serialized = JSON.stringify(pkg);
     expect(serialized).not.toMatch(/"(ownership|copyright|royalty|rightsHolder|verifiedContributor|officialCredit)":/i);
+  });
+});
+
+describe('buildDeliveryPackage — assets section', () => {
+  function buildFixtureWithAsset(): { bundle: EvidenceBundleExport; dossier: ProjectDossier; asset: ReturnType<typeof createProjectAsset> } {
+    const projectId = asProjectId('project-delivery-assets');
+    const deviceId = asDeviceId('device-delivery-assets-01');
+    const sessionId = asSessionId('session-delivery-assets-01');
+
+    const store = new LocalEvidenceStore(join(makeTempDir('flow-delivery-assets-db-'), 'evidence.db'));
+    store.insertDevice(
+      createStudioDevice({
+        id: deviceId,
+        profileId: asProfileId('profile-delivery-assets'),
+        devicePublicId: 'pub-delivery-assets',
+        platform: 'macos',
+        appVersion: '1.0.0',
+        deviceKeyFingerprint: 'b'.repeat(64),
+      }),
+      Buffer.from('not-a-real-key'),
+      '2026-01-01T00:00:00.000Z',
+    );
+    store.insertSession(
+      createStudioSession({
+        id: sessionId,
+        projectId,
+        actorProfileId: asProfileId('profile-delivery-assets'),
+        deviceId,
+        daw: 'fl_studio',
+        startedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      '2026-01-01T00:00:00.000Z',
+    );
+    const asset = createProjectAsset({
+      id: asAssetId('asset-delivery-01'),
+      projectId,
+      introducedBySessionId: sessionId,
+      assetType: 'stem',
+      sourceType: 'human_created',
+      originalFilename: 'delivery_stem.wav',
+      sha256: '7'.repeat(64),
+      firstSeenAt: '2026-01-01T00:04:00.000Z',
+    });
+    store.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+    store.close();
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+    return { bundle, dossier, asset };
+  }
+
+  it('carries the asset inventory through when the assets section is requested', () => {
+    const { bundle, dossier } = buildFixtureWithAsset();
+
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['assets'],
+    });
+
+    expect(pkg.includedSections).toEqual(['assets']);
+    expect(pkg.sections.assets).toEqual(dossier.assetInventory);
+    expect(pkg.sections.assets).toHaveLength(1);
+    expect(pkg.sections.assets![0]!.assetType).toBe('stem');
+  });
+
+  it('omits the asset inventory entirely when the section is not requested, even though the asset exists', () => {
+    const { bundle, dossier } = buildFixtureWithAsset();
+
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['project'],
+    });
+
+    expect(pkg.omittedSections).toContain('assets');
+    expect(pkg.sections.assets).toBeUndefined();
+    expect('assets' in pkg.sections).toBe(false);
+    // The asset is never smuggled into another requested section.
+    expect(JSON.stringify(pkg.sections)).not.toMatch(/delivery_stem\.wav/);
+  });
+
+  it('requesting assets without contributorClaims (and the reverse) never bundles one into the other', () => {
+    const { bundle, dossier } = buildFixtureWithAsset();
+
+    const assetsOnly = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['assets'],
+    });
+    expect(assetsOnly.sections.contributorClaims).toBeUndefined();
+    expect('contributorClaims' in assetsOnly.sections).toBe(false);
+
+    const claimsOnly = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['contributorClaims'],
+    });
+    expect(claimsOnly.sections.assets).toBeUndefined();
+    expect('assets' in claimsOnly.sections).toBe(false);
+  });
+
+  it('never synthesizes rights/ownership fields alongside the asset inventory', () => {
+    const { bundle, dossier } = buildFixtureWithAsset();
+
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'label',
+      purpose: 'licensing',
+      includeSections: ['assets', 'disclaimers'],
+    });
+
+    const serialized = JSON.stringify(pkg);
+    expect(serialized).not.toMatch(/"(ownership|copyright|royalty|rightsHolder|verifiedContributor|officialCredit|lineage)":/i);
   });
 });
 
@@ -518,6 +638,68 @@ describe('buildDeliveryPackage — Cold Nights end-to-end contributor claims', (
     // Still self-reported claims, never rights/ownership/verification language.
     const serialized = JSON.stringify(pkg);
     expect(serialized).not.toMatch(/"(verified|ownership|copyright|royalty|rightsHolder)":/i);
+  });
+});
+
+describe('buildDeliveryPackage — Cold Nights end-to-end asset persistence', () => {
+  it('carries the six Cold Nights assets (MIDI, sample, stem, guitar take, mix, master) from persistence, through a store close/reopen, through bundle, dossier, and delivery package', () => {
+    const scenario = runColdNightsScenario();
+    const allAssets = Object.values(scenario.assets);
+    expect(allAssets).toHaveLength(6);
+
+    const dbPath = join(makeTempDir('flow-delivery-cold-nights-assets-db-'), 'evidence.db');
+    const store = new LocalEvidenceStore(dbPath);
+    store.insertDevice(scenario.nightwireDevice, Buffer.from('not-a-real-key-nightwire'), scenario.nightwireSession.startedAt);
+    store.insertDevice(scenario.marcusDevice, Buffer.from('not-a-real-key-marcus'), scenario.marcusSession.startedAt);
+    store.insertSession(scenario.nightwireSession, scenario.nightwireSession.startedAt);
+    store.insertSession(scenario.marcusSession, scenario.marcusSession.startedAt);
+    for (const asset of allAssets) {
+      store.insertProjectAsset(asset, asset.firstSeenAt);
+    }
+    store.close();
+
+    // --- Close/reopen: assets must survive a real store restart, not just an in-process read.
+    const reopened = new LocalEvidenceStore(dbPath);
+    const reloaded = reopened.listProjectAssetsForProject(scenario.project.id);
+    expect(reloaded).toHaveLength(6);
+    expect(reloaded).toEqual([...allAssets].sort((a, b) => (a.firstSeenAt !== b.firstSeenAt ? (a.firstSeenAt < b.firstSeenAt ? -1 : 1) : a.id < b.id ? -1 : 1)));
+
+    // --- Evidence Bundle: full domain objects, exactly the persisted assets.
+    const bundle = assembleEvidenceBundle(reopened, { projectId: scenario.project.id, exportedAt: EXPORTED_AT });
+    reopened.close();
+    expect(bundle.assets).toHaveLength(6);
+    expect(new Set(bundle.assets.map((a) => a.id))).toEqual(new Set(allAssets.map((a) => a.id)));
+
+    // --- Project Dossier: same assets, human-readable, no lineage/rights fabricated.
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+    expect(dossier.assetInventory).toHaveLength(6);
+    const master = dossier.assetInventory.find((a) => a.assetType === 'master');
+    expect(master).toMatchObject({ id: scenario.assets.master.id, originalFilename: 'cold_nights_final_master.wav' });
+    expect(JSON.stringify(dossier.assetInventory)).not.toMatch(/"(rightsStatus|ownership|verified|lineage|relationship|derivedFrom)":/i);
+
+    // --- createdByProfileId never manufactures a contributor claim: this
+    // test never called insertContributorReference, so the claims list
+    // must stay empty regardless of how many assets exist and who
+    // "created" each one.
+    expect(dossier.contributorClaims).toEqual([]);
+
+    // --- The relationship graph (midi->stem, stem/guitar->mix, mix->master)
+    // remains entirely in-memory/unpersisted for this batch — no store
+    // table or export field for AssetRelationship exists yet.
+    expect(scenario.relationships.length).toBeGreaterThan(0);
+
+    // --- Delivery Package: reaches a recipient only through the explicit section.
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['assets', 'project'],
+    });
+    expect(pkg.sections.assets).toEqual(dossier.assetInventory);
+    expect(pkg.sections.assets).toHaveLength(6);
+
+    const serialized = JSON.stringify(pkg);
+    expect(serialized).not.toMatch(/"(verified|ownership|copyright|royalty|rightsHolder|lineage)":/i);
   });
 });
 

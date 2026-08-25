@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  asAssetId,
   asBatchId,
   asContributionClaimId,
   asDeviceId,
@@ -18,6 +19,7 @@ import { createStudioDevice } from '../../src/domain/studioDevice.js';
 import { createStudioSession } from '../../src/domain/studioSession.js';
 import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
 import { createContributorReference } from '../../src/domain/contributorReference.js';
+import { createProjectAsset } from '../../src/domain/projectAsset.js';
 import { createDeviceIdentity } from '../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../src/device/keyStore.js';
 import { signProvenanceBatch } from '../../src/device/batchSigning.js';
@@ -609,6 +611,159 @@ describe('assembleEvidenceBundle — contributor claims', () => {
     expect(bundle.contributorClaims).toEqual([]);
 
     store.close();
+  });
+});
+
+describe('assembleEvidenceBundle — assets', () => {
+  /** Seeds the minimal device+session an asset's introducedBySessionId FK requires. */
+  function seedDeviceAndSession(store: LocalEvidenceStore, projectId: ReturnType<typeof asProjectId>) {
+    const device = createStudioDevice({
+      id: asDeviceId('device-asset-fixture'),
+      profileId: asProfileId('profile-asset-fixture'),
+      devicePublicId: 'pub-asset-fixture',
+      platform: 'macos',
+      appVersion: '1.0.0',
+      deviceKeyFingerprint: 'e'.repeat(64),
+    });
+    const session = createStudioSession({
+      id: asSessionId('session-asset-fixture'),
+      projectId,
+      actorProfileId: device.profileId,
+      deviceId: device.id,
+      daw: 'fl_studio',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+    store.insertDevice(device, Buffer.from('not-a-real-key'), '2026-01-01T00:00:00.000Z');
+    store.insertSession(session, '2026-01-01T00:00:00.000Z');
+    return session;
+  }
+
+  it('exports [] for a project with zero persisted assets', () => {
+    const store = new LocalEvidenceStore(makeDbPath('flow-evidence-assets-empty-'));
+    const projectId = asProjectId('project-no-assets');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+
+    expect(bundle.assets).toEqual([]);
+    store.close();
+  });
+
+  it('exports exactly one persisted asset, with every field preserved', () => {
+    const store = new LocalEvidenceStore(makeDbPath('flow-evidence-assets-one-'));
+    const projectId = asProjectId('project-assets-one');
+    const session = seedDeviceAndSession(store, projectId);
+    const asset = createProjectAsset({
+      id: asAssetId('asset-solo-master'),
+      projectId,
+      createdByProfileId: session.actorProfileId,
+      introducedBySessionId: session.id,
+      assetType: 'master',
+      sourceType: 'human_created',
+      originalFilename: 'solo_master.wav',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 12_345,
+      firstSeenAt: '2026-01-01T00:04:00.000Z',
+    });
+    store.insertProjectAsset(asset, '2026-01-01T00:05:00.000Z');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+
+    expect(bundle.assets).toEqual([asset]);
+    store.close();
+  });
+
+  it('exports multiple assets in deterministic firstSeenAt order, without leaking another project\'s assets', () => {
+    const store = new LocalEvidenceStore(makeDbPath('flow-evidence-assets-multi-'));
+    const projectId = asProjectId('project-assets-multi');
+    const otherProjectId = asProjectId('project-assets-other');
+    const session = seedDeviceAndSession(store, projectId);
+    const otherSession = createStudioSession({
+      id: asSessionId('session-asset-fixture-other'),
+      projectId: otherProjectId,
+      actorProfileId: session.actorProfileId,
+      deviceId: session.deviceId,
+      daw: 'fl_studio',
+      startedAt: '2026-01-01T00:00:00.000Z',
+    });
+    store.insertSession(otherSession, '2026-01-01T00:00:00.000Z');
+
+    const midi = createProjectAsset({
+      id: asAssetId('asset-midi'),
+      projectId,
+      introducedBySessionId: session.id,
+      assetType: 'midi',
+      sourceType: 'human_created',
+      sha256: 'b'.repeat(64),
+      firstSeenAt: '2026-01-05T18:05:00.000Z',
+    });
+    const stem = createProjectAsset({
+      id: asAssetId('asset-stem'),
+      projectId,
+      introducedBySessionId: session.id,
+      assetType: 'stem',
+      sourceType: 'human_created',
+      sha256: 'c'.repeat(64),
+      firstSeenAt: '2026-01-05T18:10:00.000Z',
+    });
+    const otherProjectAsset = createProjectAsset({
+      id: asAssetId('asset-other-project'),
+      projectId: otherProjectId,
+      introducedBySessionId: otherSession.id,
+      assetType: 'audio',
+      sourceType: 'human_recorded',
+      sha256: 'd'.repeat(64),
+      firstSeenAt: '2026-01-05T18:00:00.000Z',
+    });
+
+    // Inserted deliberately out of chronological order.
+    store.insertProjectAsset(stem, '2026-01-05T18:15:00.000Z');
+    store.insertProjectAsset(otherProjectAsset, '2026-01-05T18:16:00.000Z');
+    store.insertProjectAsset(midi, '2026-01-05T18:17:00.000Z');
+
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+
+    expect(bundle.assets).toEqual([midi, stem]);
+    expect(bundle.assets.some((a) => a.id === otherProjectAsset.id)).toBe(false);
+    store.close();
+  });
+
+  it('never infers an asset from active session/event participants', () => {
+    const { store, scenario } = seedColdNightsStore(makeDbPath('flow-evidence-assets-no-inference-'));
+
+    const bundle = assembleEvidenceBundle(store, { projectId: scenario.project.id, exportedAt: EXPORTED_AT });
+
+    // Cold Nights has real recorded activity in this store, but this test
+    // never called insertProjectAsset — so the assets list must stay
+    // empty regardless of how much activity is present.
+    expect(bundle.sessions.length).toBeGreaterThan(0);
+    expect(bundle.events.length).toBeGreaterThan(0);
+    expect(bundle.assets).toEqual([]);
+
+    store.close();
+  });
+
+  it('changing which assets are persisted changes integrityManifest.canonicalHash', () => {
+    const dbPath = makeDbPath('flow-evidence-assets-hash-');
+    const projectId = asProjectId('project-assets-hash');
+    const storeA = new LocalEvidenceStore(dbPath);
+    const sessionA = seedDeviceAndSession(storeA, projectId);
+    const bundleWithoutAsset = assembleEvidenceBundle(storeA, { projectId, exportedAt: EXPORTED_AT });
+    storeA.insertProjectAsset(
+      createProjectAsset({
+        id: asAssetId('asset-hash-sensitivity'),
+        projectId,
+        introducedBySessionId: sessionA.id,
+        assetType: 'audio',
+        sourceType: 'human_recorded',
+        sha256: 'f'.repeat(64),
+        firstSeenAt: '2026-01-01T00:04:00.000Z',
+      }),
+      '2026-01-01T00:05:00.000Z',
+    );
+    const bundleWithAsset = assembleEvidenceBundle(storeA, { projectId, exportedAt: EXPORTED_AT });
+
+    expect(bundleWithAsset.integrityManifest.canonicalHash).not.toBe(bundleWithoutAsset.integrityManifest.canonicalHash);
+    storeA.close();
   });
 });
 
