@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { asBatchId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
+import { asBatchId, asContributionClaimId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
 import { createStudioDevice } from '../../src/domain/studioDevice.js';
 import { createStudioSession } from '../../src/domain/studioSession.js';
 import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
+import { createContributorReference } from '../../src/domain/contributorReference.js';
 import { createDeviceIdentity } from '../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../src/device/keyStore.js';
 import { signProvenanceBatch } from '../../src/device/batchSigning.js';
@@ -200,7 +201,14 @@ describe('buildDeliveryPackage — selective disclosure', () => {
     });
 
     expect(pkg.includedSections).toEqual(['project', 'trustSummary']);
-    expect(pkg.omittedSections).toEqual(['participants', 'activity', 'documentationProfile', 'evidenceReferences', 'disclaimers']);
+    expect(pkg.omittedSections).toEqual([
+      'participants',
+      'contributorClaims',
+      'activity',
+      'documentationProfile',
+      'evidenceReferences',
+      'disclaimers',
+    ]);
     expect(pkg.sections.project).toEqual(dossier.project);
     expect(pkg.sections.trustSummary).toEqual(dossier.trust);
     expect(pkg.sections.participants).toBeUndefined();
@@ -224,6 +232,79 @@ describe('buildDeliveryPackage — selective disclosure', () => {
     expect(pkg.includedSections).toEqual([]);
     expect(pkg.omittedSections).toContain('documentationProfile');
     expect(pkg.sections.documentationProfile).toBeUndefined();
+  });
+});
+
+describe('buildDeliveryPackage — contributor claims section', () => {
+  function buildFixtureWithClaim(): { bundle: EvidenceBundleExport; dossier: ProjectDossier; claim: ReturnType<typeof createContributorReference> } {
+    const projectId = asProjectId('project-delivery-claims');
+    const claim = createContributorReference({
+      id: asContributionClaimId('claim-delivery-01'),
+      projectId,
+      profileId: asProfileId('profile-delivery-claimant'),
+      role: 'producer',
+      subrole: 'producer',
+      claimedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const store = new LocalEvidenceStore(join(makeTempDir('flow-delivery-claims-db-'), 'evidence.db'));
+    store.insertContributorReference(claim, '2026-01-01T00:05:00.000Z');
+    const bundle = assembleEvidenceBundle(store, { projectId, exportedAt: EXPORTED_AT });
+    store.close();
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+    return { bundle, dossier, claim };
+  }
+
+  it('carries contributor claims through when the contributorClaims section is requested', () => {
+    const { bundle, dossier } = buildFixtureWithClaim();
+
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['contributorClaims'],
+    });
+
+    expect(pkg.includedSections).toEqual(['contributorClaims']);
+    expect(pkg.sections.contributorClaims).toEqual(dossier.contributorClaims);
+    expect(pkg.sections.contributorClaims).toHaveLength(1);
+    expect(pkg.sections.contributorClaims![0]!.role).toBe('producer');
+  });
+
+  it('omits contributor claims entirely when the section is not requested, even though the claim exists', () => {
+    const { bundle, dossier } = buildFixtureWithClaim();
+
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['project'],
+    });
+
+    expect(pkg.omittedSections).toContain('contributorClaims');
+    expect(pkg.sections.contributorClaims).toBeUndefined();
+    expect('contributorClaims' in pkg.sections).toBe(false);
+    // The claim is never smuggled into another requested section.
+    expect(JSON.stringify(pkg.sections)).not.toMatch(/profile-delivery-claimant/);
+  });
+
+  it('never synthesizes rights/ownership fields alongside contributor claims', () => {
+    const { bundle, dossier } = buildFixtureWithClaim();
+
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'label',
+      purpose: 'licensing',
+      includeSections: ['contributorClaims', 'disclaimers'],
+    });
+
+    for (const claim of pkg.sections.contributorClaims!) {
+      expect(Object.keys(claim).sort()).toEqual(
+        [...new Set(['id', 'profileId', 'role', 'claimedAt', ...(('subrole' in claim) ? ['subrole'] : []), ...(('description' in claim) ? ['description'] : [])])].sort(),
+      );
+    }
+    const serialized = JSON.stringify(pkg);
+    expect(serialized).not.toMatch(/"(ownership|copyright|royalty|rightsHolder|verifiedContributor|officialCredit)":/i);
   });
 });
 
@@ -394,6 +475,49 @@ describe('buildDeliveryPackage — project isolation', () => {
     for (const batch of bundleB.batches) {
       expect(refIds.has(batch.id)).toBe(false);
     }
+  });
+});
+
+describe('buildDeliveryPackage — Cold Nights end-to-end contributor claims', () => {
+  it('carries NightWire\'s producer/songwriter claims and Marcus\'s lead-guitar claim from persistence through bundle, dossier, and delivery package, remaining claims throughout', () => {
+    const scenario = runColdNightsScenario();
+    expect(scenario.contributors).toHaveLength(3);
+
+    const store = new LocalEvidenceStore(join(makeTempDir('flow-delivery-cold-nights-claims-db-'), 'evidence.db'));
+    for (const claim of scenario.contributors) {
+      store.insertContributorReference(claim, claim.claimedAt);
+    }
+    const bundle = assembleEvidenceBundle(store, { projectId: scenario.project.id, exportedAt: EXPORTED_AT });
+    store.close();
+
+    // --- Evidence Bundle: full domain objects, exactly the persisted claims.
+    expect(bundle.contributorClaims).toEqual(
+      [...scenario.contributors].sort((a, b) => (a.claimedAt !== b.claimedAt ? (a.claimedAt < b.claimedAt ? -1 : 1) : a.id < b.id ? -1 : 1)),
+    );
+
+    // --- Project Dossier: same claims, human-readable, still labeled as claims.
+    const dossier = buildProjectDossier(bundle, { generatedAt: GENERATED_AT });
+    expect(dossier.contributorClaims).toHaveLength(3);
+    const producer = dossier.contributorClaims.find((c) => c.role === 'producer');
+    const songwriter = dossier.contributorClaims.find((c) => c.role === 'songwriter');
+    const musician = dossier.contributorClaims.find((c) => c.role === 'musician');
+    expect(producer).toMatchObject({ profileId: scenario.nightwireSession.actorProfileId, subrole: 'producer' });
+    expect(songwriter).toMatchObject({ profileId: scenario.nightwireSession.actorProfileId, subrole: 'melody' });
+    expect(musician).toMatchObject({ profileId: scenario.marcusSession.actorProfileId, subrole: 'lead_guitar' });
+
+    // --- Delivery Package: reaches a recipient only through the explicit section.
+    const pkg = buildDeliveryPackage(bundle, dossier, {
+      createdAt: CREATED_AT,
+      audience: 'collaborator',
+      purpose: 'review',
+      includeSections: ['contributorClaims', 'project'],
+    });
+    expect(pkg.sections.contributorClaims).toEqual(dossier.contributorClaims);
+    expect(pkg.sections.contributorClaims).toHaveLength(3);
+
+    // Still self-reported claims, never rights/ownership/verification language.
+    const serialized = JSON.stringify(pkg);
+    expect(serialized).not.toMatch(/"(verified|ownership|copyright|royalty|rightsHolder)":/i);
   });
 });
 

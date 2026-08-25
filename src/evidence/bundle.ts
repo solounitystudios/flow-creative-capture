@@ -6,6 +6,7 @@ import type { StudioSession } from '../domain/studioSession.js';
 import type { ProvenanceEvent } from '../domain/provenanceEvent.js';
 import type { ProvenanceCheckpoint } from '../domain/provenanceCheckpoint.js';
 import type { ProvenanceBatch } from '../domain/provenanceBatch.js';
+import type { ContributorReference } from '../domain/contributorReference.js';
 import { evaluateStoredBatchTrust, type BatchTrustEvaluation } from '../trust/batchTrust.js';
 import type { LocalEvidenceStore } from '../store/evidenceStore.js';
 import { EvidenceBundleAssemblyError } from './errors.js';
@@ -113,6 +114,17 @@ export interface EvidenceBundleIntegrityManifest {
   readonly canonicalHash: string;
 }
 
+/**
+ * EXPLICIT, self-reported contribution claims for this project — exactly
+ * `store.listContributorReferencesForProject(project.id)`, never a
+ * derivation from `sessions`/`events`/`devices`. A profile with rich
+ * activity above but no `ContributorReference` of its own contributes
+ * zero entries here; this array is never back-filled from activity data.
+ * See `src/domain/contributorReference.ts` and PROVENANCE_SPEC.md §3 for
+ * what a claim is and is not: not FLOW verification, not ownership, not
+ * copyright/publishing/master ownership, not a royalty/split
+ * determination, not a contract.
+ */
 export interface EvidenceBundleExport {
   readonly manifestVersion: 1;
   readonly exportedAt: string;
@@ -122,6 +134,7 @@ export interface EvidenceBundleExport {
   readonly events: readonly ProvenanceEvent[];
   readonly checkpoints: readonly ProvenanceCheckpoint[];
   readonly batches: readonly ProvenanceBatch[];
+  readonly contributorClaims: readonly ContributorReference[];
   readonly trustEvaluationSnapshots: readonly TrustEvaluationSnapshot[];
   readonly documentation?: EvidenceBundleDocumentationEnvelope;
   readonly evidenceReferenceSchemaVersion: 1;
@@ -286,6 +299,11 @@ export function assembleEvidenceBundle(store: LocalEvidenceStore, options: Assem
   // canonical order rather than left implicit.
   const checkpoints = [...store.listCheckpointsForProject(options.projectId)];
 
+  // Already claimedAt/rowid-ordered by the store (LocalEvidenceStore's own
+  // deterministic contract) — never inferred from sessions/events/devices
+  // above. A project with zero explicitly-inserted claims exports [].
+  const contributorClaims = [...store.listContributorReferencesForProject(options.projectId)];
+
   const devices = collectDeviceIds(sessions, events, batches).map((deviceId) =>
     resolveEvidenceBundleDevice(store, deviceId),
   );
@@ -325,6 +343,7 @@ export function assembleEvidenceBundle(store: LocalEvidenceStore, options: Assem
     events,
     checkpoints,
     batches,
+    contributorClaims,
     trustEvaluationSnapshots,
     ...(documentation !== undefined ? { documentation } : {}),
     evidenceReferenceSchemaVersion: 1 as const,
