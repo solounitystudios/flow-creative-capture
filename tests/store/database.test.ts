@@ -635,6 +635,126 @@ CREATE TRIGGER trg_project_assets_no_update BEFORE UPDATE ON project_assets BEGI
 CREATE TRIGGER trg_project_assets_no_delete BEFORE DELETE ON project_assets BEGIN SELECT RAISE(ABORT, 'project_assets is append-only: rows cannot be deleted'); END;
 `;
 
+describe('openEvidenceDatabase — schema v3 -> v4 "upgrade" is a safe rejection, not a migration', () => {
+  /**
+   * This store has no migration engine (see schema.ts's docstring and
+   * every prior version-bump test above) — there is no code path that
+   * takes a v3 database and rewrites it into a v4 one in place. The only
+   * safe "upgrade" this architecture supports is: reject the mismatched
+   * database outright (proven here, comprehensively, across every table
+   * a real v3 install could hold), and create a fresh v4 database
+   * separately when a caller explicitly chooses to (already proven by
+   * "initializes a fresh database with the projects table present" and
+   * the full LocalEvidenceStore — projects test suite in
+   * evidenceStore.test.ts). This test exists specifically to prove that
+   * rejection touches NOTHING — every table, not just `devices` — and
+   * that repeatedly attempting to open the same v3 file under v4 code
+   * (e.g. a service restarted twice against old data) is idempotent: it
+   * fails the same safe way every time, never partially applying
+   * anything on a later attempt.
+   */
+  it('rejects a v3 database with real rows in every v3 table, preserving all of them byte-for-byte, and does so identically on repeated open attempts', () => {
+    const path = makeDbPath();
+
+    const v3 = new DatabaseSync(path);
+    v3.exec(SCHEMA_V3_DDL);
+    v3.prepare('INSERT INTO schema_version (version) VALUES (?)').run(3);
+    v3.prepare(
+      'INSERT INTO devices (id, profileId, devicePublicId, platform, appVersion, deviceKeyFingerprint, publicKeySpkiDer, verifiedAt, storedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('device-1', 'profile-1', 'pub-1', 'macos', '1.0.0', 'f'.repeat(64), 'AAAA', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    v3.prepare(
+      'INSERT INTO sessions (id, projectId, actorProfileId, deviceId, daw, startedAt, storedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run('session-1', 'project-legacy', 'profile-1', 'device-1', 'fl_studio', '2026-01-01T00:01:00.000Z', '2026-01-01T00:01:00.000Z');
+    v3.prepare(
+      'INSERT INTO session_ends (sessionId, endedAt, status, storedAt) VALUES (?, ?, ?, ?)',
+    ).run('session-1', '2026-01-01T00:30:00.000Z', 'ended', '2026-01-01T00:30:00.000Z');
+    v3.prepare(
+      'INSERT INTO events (eventId, projectId, sessionId, actorProfileId, deviceId, source, eventType, occurredAt, payload, storedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('event-1', 'project-legacy', 'session-1', 'profile-1', 'device-1', 'fl_studio', 'project_saved', '2026-01-01T00:02:00.000Z', '{}', '2026-01-01T00:02:00.000Z');
+    v3.prepare(
+      'INSERT INTO checkpoints (id, projectId, sessionId, actorProfileId, sequence, manifestHash, checkpointHash, triggerType, createdAt, storedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('checkpoint-1', 'project-legacy', 'session-1', 'profile-1', 0, 'a'.repeat(64), 'b'.repeat(64), 'manual', '2026-01-01T00:03:00.000Z', '2026-01-01T00:03:00.000Z');
+    v3.prepare(
+      'INSERT INTO batches (id, profileId, deviceId, sessionId, eventCount, firstEventAt, lastEventAt, manifestHash, signature, createdAt, storedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('batch-1', 'profile-1', 'device-1', 'session-1', 1, '2026-01-01T00:02:00.000Z', '2026-01-01T00:02:00.000Z', 'c'.repeat(64), 'd'.repeat(88), '2026-01-01T00:04:00.000Z', '2026-01-01T00:04:00.000Z');
+    v3.prepare(
+      'INSERT INTO batch_validation_state (batchId, validationStatus, statusAt, storedAt) VALUES (?, ?, ?, ?)',
+    ).run('batch-1', 'valid', '2026-01-01T00:05:00.000Z', '2026-01-01T00:05:00.000Z');
+    v3.prepare(
+      'INSERT INTO contributor_references (id, projectId, profileId, role, claimedAt, storedAt) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run('claim-1', 'project-legacy', 'profile-2', 'musician', '2026-01-01T00:06:00.000Z', '2026-01-01T00:06:00.000Z');
+    v3.prepare(
+      'INSERT INTO project_assets (id, projectId, introducedBySessionId, assetType, sourceType, sha256, firstSeenAt, originStatus, storedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('asset-1', 'project-legacy', 'session-1', 'audio', 'human_recorded', 'e'.repeat(64), '2026-01-01T00:07:00.000Z', 'declared', '2026-01-01T00:07:00.000Z');
+    v3.close();
+
+    const tablesWithLegacyRows: readonly [string, string, string][] = [
+      ['devices', 'id', 'device-1'],
+      ['sessions', 'id', 'session-1'],
+      ['session_ends', 'sessionId', 'session-1'],
+      ['events', 'eventId', 'event-1'],
+      ['checkpoints', 'id', 'checkpoint-1'],
+      ['batches', 'id', 'batch-1'],
+      ['batch_validation_state', 'batchId', 'batch-1'],
+      ['contributor_references', 'id', 'claim-1'],
+      ['project_assets', 'id', 'asset-1'],
+    ];
+
+    function snapshotAllRows(): Record<string, Record<string, unknown> | undefined> {
+      const db = new DatabaseSync(path);
+      const snapshot: Record<string, Record<string, unknown> | undefined> = {};
+      for (const [table, idColumn, idValue] of tablesWithLegacyRows) {
+        snapshot[table] = db.prepare(`SELECT * FROM ${table} WHERE ${idColumn} = ?`).get(idValue);
+      }
+      db.close();
+      return snapshot;
+    }
+
+    const before = snapshotAllRows();
+    for (const [table] of tablesWithLegacyRows) {
+      expect(before[table], `expected a pre-existing row in ${table} before any open attempt`).toBeDefined();
+    }
+
+    // First open attempt under v4 code: rejected, nothing touched.
+    expect(() => openEvidenceDatabase(path)).toThrow(UnsupportedSchemaVersionError);
+    const afterFirstAttempt = snapshotAllRows();
+    expect(afterFirstAttempt).toEqual(before);
+
+    // A second, independent open attempt (e.g. the Studio service process
+    // restarting twice against the same old file) must fail exactly the
+    // same way, not "succeed the second time" or partially apply a v4
+    // shape — there is no migration state to accumulate across attempts.
+    expect(() => openEvidenceDatabase(path)).toThrow(UnsupportedSchemaVersionError);
+    const afterSecondAttempt = snapshotAllRows();
+    expect(afterSecondAttempt).toEqual(before);
+
+    // The schema_version row itself, and the absence of `projects`, are
+    // both still exactly what they were — no partial migration artifact
+    // of any kind was left behind by either attempt.
+    const finalCheck = new DatabaseSync(path);
+    expect((finalCheck.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(3);
+    const finalTables = finalCheck.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
+    expect(finalTables.map((t) => t.name)).not.toContain('projects');
+    finalCheck.close();
+  });
+
+  it('the only supported path forward for a v3 database is a fresh, separate v4 database — which then fully supports project creation alongside all prior record kinds', () => {
+    // Not an in-place migration: a genuinely new file, initialized fresh.
+    // This is the other half of the "upgrade" story — already exercised
+    // in depth by LocalEvidenceStore's own "projects" test suite
+    // (evidenceStore.test.ts), restated here at the database-open level
+    // to keep the full v3 -> v4 narrative in one place.
+    const freshPath = makeDbPath();
+    const db = openEvidenceDatabase(freshPath);
+    expect((db.prepare('SELECT version FROM schema_version').get() as { version: number }).version).toBe(4);
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
+    for (const expectedTable of ['projects', 'devices', 'sessions', 'events', 'checkpoints', 'batches', 'contributor_references', 'project_assets']) {
+      expect(tables.map((t) => t.name)).toContain(expectedTable);
+    }
+    closeEvidenceDatabase(db);
+  });
+});
+
 describe('openEvidenceDatabase — pre-projects (schema version 3) database rejection', () => {
   it('rejects a pre-projects (schema version 3) database safely', () => {
     const path = makeDbPath();

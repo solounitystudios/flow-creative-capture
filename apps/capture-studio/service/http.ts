@@ -57,8 +57,21 @@ function readBody(req: IncomingMessage, limitBytes: number): Promise<Buffer> {
       total += chunk.length;
       if (total > limitBytes) {
         rejected = true;
+        // Deliberately does NOT call req.destroy() here: destroying the
+        // request stream tends to tear down the underlying socket before
+        // the caller's error handler (createStudioHttpServer's .catch, via
+        // this rejection) gets a chance to write a clean 413 response —
+        // observed directly as the client seeing ECONNRESET instead of an
+        // HTTP error body (service/http.test.ts, "rejects a JSON body over
+        // the size limit"). Already-buffered chunks are dropped (never
+        // pushed past the limit, so memory stays bounded); any further
+        // bytes on the wire are simply ignored by the `rejected` guard
+        // above rather than accumulated. This is a local, single-user
+        // companion service (see this module's docstring) — draining an
+        // oversized request instead of hard-resetting the socket is an
+        // acceptable, smaller-blast-radius tradeoff than an unexplained
+        // connection reset.
         reject(new StudioServiceError('Request body exceeds the allowed size limit', 413));
-        req.destroy();
         return;
       }
       chunks.push(chunk);

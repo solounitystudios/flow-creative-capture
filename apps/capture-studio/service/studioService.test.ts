@@ -199,6 +199,79 @@ describe('StudioService — contributor claims', () => {
     ).toThrow();
     service.close();
   });
+
+  it('rejects an unrecognized role even when a subrole is also supplied, as a clean StudioServiceError rather than a raw TypeError', () => {
+    // Regression guard for the documented gap: createContributorReference
+    // (src/domain/contributorReference.ts) only validates subrole-against-role
+    // when a subrole is present, and its isValidSubrole lookup
+    // (SUBROLES_BY_ROLE[role]) throws a raw TypeError for an unrecognized
+    // role rather than a clean domain error. validateContributionRole in
+    // studioService.ts must reject the bad role BEFORE that lookup ever
+    // runs, for every input shape — including this one.
+    const service = new StudioService(makeDataDir());
+    const project = service.createProject({ ownerProfileId: 'profile-1', title: 'Cold Nights', projectType: 'song' });
+    const session = service.startSession(project.id, { actorProfileId: 'profile-1' });
+
+    expect(() =>
+      service.addContributorClaim(project.id, {
+        sessionId: session.id,
+        profileId: 'profile-2',
+        role: 'not-a-role',
+        subrole: 'also-not-real',
+      }),
+    ).toThrow(StudioServiceError);
+
+    const snapshot = service.getProjectSnapshot(project.id);
+    expect(snapshot.contributorClaims).toHaveLength(0);
+    service.close();
+  });
+});
+
+describe('StudioService — asset ingestion: duplicate filenames', () => {
+  it('two assets with the identical originalFilename but different byte content persist as two distinct, non-overwriting records', () => {
+    const service = new StudioService(makeDataDir());
+    const project = service.createProject({ ownerProfileId: 'profile-1', title: 'Cold Nights', projectType: 'song' });
+    const session = service.startSession(project.id, { actorProfileId: 'profile-1' });
+
+    const first = service.ingestAsset(project.id, session.id, Buffer.from('take one'), { originalFilename: 'take.wav' });
+    const second = service.ingestAsset(project.id, session.id, Buffer.from('take two, completely different content'), {
+      originalFilename: 'take.wav',
+    });
+
+    expect(first.id).not.toBe(second.id);
+    expect(first.sha256).not.toBe(second.sha256);
+
+    const snapshot = service.getProjectSnapshot(project.id);
+    expect(snapshot.assets).toHaveLength(2);
+    expect(snapshot.assets.map((a) => a.id).sort()).toEqual([first.id, second.id].sort());
+    // Neither record's own bytes/hash were overwritten by the other's ingest.
+    expect(snapshot.assets.find((a) => a.id === first.id)?.sha256).toBe(first.sha256);
+    expect(snapshot.assets.find((a) => a.id === second.id)?.sha256).toBe(second.sha256);
+    service.close();
+  });
+});
+
+describe('StudioService — device identity stability across restart', () => {
+  it('the local device identity (fingerprint, deviceId) is identical across a close/reopen at the same data dir — not regenerated', () => {
+    const dataDir = makeDataDir();
+    const first = new StudioService(dataDir);
+    const projectA = first.createProject({ ownerProfileId: 'profile-1', title: 'A', projectType: 'song' });
+    const sessionA = first.startSession(projectA.id, { actorProfileId: 'profile-1' });
+    first.close();
+
+    const second = new StudioService(dataDir);
+    const projectB = second.createProject({ ownerProfileId: 'profile-1', title: 'B', projectType: 'song' });
+    const sessionB = second.startSession(projectB.id, { actorProfileId: 'profile-1' });
+
+    // Both sessions were opened by the "same" local device, across a real
+    // process boundary (a fresh StudioService instance = a fresh
+    // FileDeviceKeyStore load, not an in-memory identity reused by
+    // accident) — deviceId is the visible proxy for that here, since
+    // fingerprint/public key are deliberately never returned by any
+    // public method (see the private-key-boundary test above).
+    expect(sessionB.deviceId).toBe(sessionA.deviceId);
+    second.close();
+  });
 });
 
 describe('StudioService — private key boundary', () => {

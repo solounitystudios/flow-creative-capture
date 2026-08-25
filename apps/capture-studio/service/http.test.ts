@@ -158,4 +158,78 @@ describe('Studio HTTP service — end to end', () => {
     expect(snapshotText).not.toMatch(/publicKeySpkiDer/i);
     expect(snapshotText).not.toMatch(/deviceKeyFingerprint/i);
   });
+
+  it('rejects a malformed JSON body cleanly (400), not a crash or a 500', async () => {
+    const res = await fetch(`${baseUrl}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{ this is not valid json',
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/not valid json/i);
+
+    // The server is still alive and serving other requests afterward.
+    const health = await fetch(`${baseUrl}/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it('rejects a JSON body over the size limit (413), and the server survives to serve the next request', async () => {
+    // Well over the 1MB JSON body cap in http.ts, but small enough to stay fast.
+    const oversized = JSON.stringify({ ownerProfileId: 'profile-1', title: 'x'.repeat(2 * 1024 * 1024), projectType: 'song' });
+    const res = await fetch(`${baseUrl}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: oversized,
+    });
+    expect(res.status).toBe(413);
+
+    const health = await fetch(`${baseUrl}/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it('returns a clean, non-crashing response for a method mismatch on a known path', async () => {
+    const project = await createProject();
+    const res = await fetch(`${baseUrl}/projects/${project.id}`, { method: 'DELETE' });
+    // Not implemented as a route at all -> the router's catch-all, which
+    // is a clean 404 rather than a hang, a crash, or a raw exception body.
+    expect([404, 405]).toContain(res.status);
+    const body = (await res.json()) as { error: string };
+    expect(typeof body.error).toBe('string');
+
+    const health = await fetch(`${baseUrl}/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it('an aborted in-flight request does not crash the server or corrupt subsequent requests', async () => {
+    const controller = new AbortController();
+    const pending = fetch(`${baseUrl}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerProfileId: 'profile-1', title: 'Aborted', projectType: 'song' }),
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+
+    // The server is still alive, and did not durably persist a
+    // half-formed project from the aborted request.
+    const health = await fetch(`${baseUrl}/health`);
+    expect(health.status).toBe(200);
+    const list = await fetch(`${baseUrl}/projects`);
+    const projects = (await list.json()) as { title: string }[];
+    expect(projects.some((p) => p.title === 'Aborted')).toBe(false);
+  });
+
+  it('never binds to a non-loopback interface (source-level regression guard for the service entrypoint)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const entrypointPath = fileURLToPath(new URL('./index.ts', import.meta.url));
+    const source = readFileSync(entrypointPath, 'utf8');
+    expect(source).toMatch(/server\.listen\(\s*PORT\s*,\s*'127\.0\.0\.1'/);
+    // The docstring itself legitimately mentions "never `0.0.0.0`" as a
+    // negative example — assert no *listen call* uses it, not that the
+    // literal substring is absent from the whole file (comments included).
+    expect(source).not.toMatch(/\.listen\([^)]*'0\.0\.0\.0'/);
+  });
 });
