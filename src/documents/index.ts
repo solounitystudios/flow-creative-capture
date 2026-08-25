@@ -1,6 +1,7 @@
 export type {
   BuildProjectDossierOptions,
   DossierActivity,
+  DossierContributionClaim,
   DossierDisclaimers,
   DossierParticipant,
   DossierTrustSummary,
