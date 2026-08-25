@@ -13,7 +13,7 @@ import { App } from '../App.js';
 function createMockBackend() {
   let nextId = 1;
   const projects: Record<string, { id: string; ownerProfileId: string; title: string; projectType: string; status: string }> = {};
-  const sessions: Record<string, { id: string; projectId: string; actorProfileId: string }[]> = {};
+  const sessions: Record<string, { id: string; projectId: string; actorProfileId: string; status: string }[]> = {};
   const assets: Record<
     string,
     {
@@ -30,6 +30,20 @@ function createMockBackend() {
     }[]
   > = {};
   const claims: Record<string, { id: string; projectId: string; profileId: string; role: string; subrole?: string }[]> = {};
+  const checkpoints: Record<string, { id: string; projectId: string; sequence: number; triggerType: string; createdAt: string; signature: string }[]> = {};
+  /** Per-checkpoint verify() override for tests that need a non-sound evaluation. */
+  const verifyOverrides: Record<string, unknown> = {};
+
+  function soundEvaluation(checkpointId: string) {
+    return {
+      checkpointId,
+      signature: { status: 'valid', verification: { valid: true } },
+      structure: { valid: true, checkpointChain: { valid: true, errors: [] }, errors: [] },
+      deviceTrust: { deviceFound: true, currentlyTrusted: true },
+      claimStatus: 'locally_sound_unverified_claim',
+      reasons: [],
+    };
+  }
 
   function snapshotFor(projectId: string) {
     return {
@@ -41,7 +55,7 @@ function createMockBackend() {
     };
   }
 
-  return async function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const mockFetch = async function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = new URL(typeof input === 'string' ? input : input.toString());
     const method = init?.method ?? 'GET';
     const json = (body: unknown, status = 200) =>
@@ -71,6 +85,62 @@ function createMockBackend() {
       const session = { id, projectId, actorProfileId: body.actorProfileId, daw: 'other', startedAt: '2026-01-01T00:00:00.000Z', status: 'active' };
       sessions[projectId] = [...(sessions[projectId] ?? []), session];
       return json(session, 201);
+    }
+    const sessionEndMatch = url.pathname.match(/^\/projects\/([^/]+)\/sessions\/([^/]+)\/end$/);
+    if (sessionEndMatch !== null && method === 'POST') {
+      const [, projectId, sessionId] = sessionEndMatch;
+      const list = sessions[projectId!] ?? [];
+      const session = list.find((s) => s.id === sessionId);
+      if (session !== undefined) {
+        session.status = 'ended';
+      }
+      // Mirrors the real service's session_end auto-checkpoint policy
+      // (checkpointPolicy.ts) closely enough for UI wiring tests: cut one
+      // if this project has any evidence at all. The exact "new evidence
+      // since the previous checkpoint" policy itself is exercised for real
+      // in service/studioService.test.ts, not re-derived here.
+      const existing = checkpoints[projectId!] ?? [];
+      if ((assets[projectId!] ?? []).length > 0 || (claims[projectId!] ?? []).length > 0) {
+        const id = `checkpoint-${nextId++}`;
+        checkpoints[projectId!] = [
+          ...existing,
+          {
+            id,
+            projectId: projectId!,
+            sequence: existing.length,
+            triggerType: 'session_end',
+            createdAt: '2026-01-01T00:11:00.000Z',
+            signature: 'ZmFrZS1zaWduYXR1cmUtYnl0ZXMtZm9yLXRlc3Rpbmc=',
+          },
+        ];
+      }
+      return json(session, 200);
+    }
+    const checkpointsCreateMatch = url.pathname.match(/^\/projects\/([^/]+)\/sessions\/([^/]+)\/checkpoints$/);
+    if (checkpointsCreateMatch !== null && method === 'POST') {
+      const [, projectId] = checkpointsCreateMatch;
+      const body = JSON.parse((init?.body as string | undefined) ?? '{}') as { triggerType?: string };
+      const existing = checkpoints[projectId!] ?? [];
+      const id = `checkpoint-${nextId++}`;
+      const checkpoint = {
+        id,
+        projectId: projectId!,
+        sequence: existing.length,
+        triggerType: body.triggerType ?? 'manual',
+        createdAt: '2026-01-01T00:10:00.000Z',
+        signature: 'ZmFrZS1zaWduYXR1cmUtYnl0ZXMtZm9yLXRlc3Rpbmc=',
+      };
+      checkpoints[projectId!] = [...existing, checkpoint];
+      return json(checkpoint, 201);
+    }
+    const checkpointsListMatch = url.pathname.match(/^\/projects\/([^/]+)\/checkpoints$/);
+    if (checkpointsListMatch !== null && method === 'GET') {
+      return json(checkpoints[checkpointsListMatch[1]!] ?? []);
+    }
+    const checkpointVerifyMatch = url.pathname.match(/^\/projects\/([^/]+)\/checkpoints\/([^/]+)\/verify$/);
+    if (checkpointVerifyMatch !== null && method === 'POST') {
+      const [, , checkpointId] = checkpointVerifyMatch;
+      return json(verifyOverrides[checkpointId!] ?? verifyOverrides['*'] ?? soundEvaluation(checkpointId!));
     }
     const assetsMatch = url.pathname.match(/^\/projects\/([^/]+)\/sessions\/([^/]+)\/assets$/);
     if (assetsMatch !== null && method === 'POST') {
@@ -110,6 +180,13 @@ function createMockBackend() {
 
     return json({ error: `no mock route for ${method} ${url.pathname}` }, 404);
   };
+
+  return {
+    fetch: mockFetch,
+    setVerifyOverride(checkpointId: string, evaluation: unknown) {
+      verifyOverrides[checkpointId] = evaluation;
+    },
+  };
 }
 
 function renderLiveStudio() {
@@ -119,7 +196,7 @@ function renderLiveStudio() {
 
 describe('Live Studio — real write path (mocked Studio service)', () => {
   it('creates a project, selects it, starts a session, ingests a file, and adds a contributor claim', async () => {
-    vi.stubGlobal('fetch', vi.fn(createMockBackend()));
+    vi.stubGlobal('fetch', vi.fn(createMockBackend().fetch));
     renderLiveStudio();
 
     await waitFor(() => expect(screen.getByText(/create the first one below/i)).toBeInTheDocument());
@@ -155,7 +232,7 @@ describe('Live Studio — real write path (mocked Studio service)', () => {
   });
 
   it('lists multiple projects and switches between them on selection', async () => {
-    vi.stubGlobal('fetch', vi.fn(createMockBackend()));
+    vi.stubGlobal('fetch', vi.fn(createMockBackend().fetch));
     renderLiveStudio();
     await waitFor(() => expect(screen.getByText(/create the first one below/i)).toBeInTheDocument());
 
@@ -185,7 +262,7 @@ describe('Live Studio — real write path (mocked Studio service)', () => {
   });
 
   it('never labels a contributor claim "Verified" or "Confirmed" in live mode either', async () => {
-    vi.stubGlobal('fetch', vi.fn(createMockBackend()));
+    vi.stubGlobal('fetch', vi.fn(createMockBackend().fetch));
     renderLiveStudio();
     await waitFor(() => expect(screen.getByText(/create the first one below/i)).toBeInTheDocument());
 
@@ -204,5 +281,92 @@ describe('Live Studio — real write path (mocked Studio service)', () => {
     expect(workspace.queryByText('Verified')).not.toBeInTheDocument();
     expect(workspace.queryByText('Confirmed')).not.toBeInTheDocument();
     expect(workspace.getByText('Claimed')).toBeInTheDocument();
+  });
+});
+
+describe('Live Studio — evidence timeline (Capture Studio V2)', () => {
+  async function setUpProjectWithSessionAndAsset() {
+    const backend = createMockBackend();
+    vi.stubGlobal('fetch', vi.fn(backend.fetch));
+    renderLiveStudio();
+    await waitFor(() => expect(screen.getByText(/create the first one below/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('e.g. Midnight Drive'), { target: { value: 'Evidence Project' } });
+    fireEvent.click(screen.getByRole('button', { name: /create project/i }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Evidence Project' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /start session as/i }));
+    await waitFor(() => expect(screen.getByLabelText('Choose a local file to ingest')).toBeInTheDocument());
+
+    const file = new File(['fake audio bytes'], 'take.wav', { type: 'audio/wav' });
+    fireEvent.change(screen.getByLabelText('Choose a local file to ingest'), { target: { files: [file] } });
+    await waitFor(() => expect(screen.getAllByText('take.wav').length).toBeGreaterThanOrEqual(1));
+
+    return backend;
+  }
+
+  it('renders a signed checkpoint in the evidence timeline once created, with its verified state visually represented', async () => {
+    await setUpProjectWithSessionAndAsset();
+
+    expect(screen.getByText('Evidence checkpoints')).toBeInTheDocument();
+    expect(screen.getByText('No checkpoints yet for this project.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /create evidence checkpoint/i }));
+
+    await waitFor(() => expect(screen.getByText(/Checkpoint #0/)).toBeInTheDocument());
+    const timelineCard = screen.getByText('Evidence checkpoints').closest('.card') as HTMLElement;
+    const timeline = within(timelineCard);
+    await waitFor(() => expect(timeline.getByText('Signature valid')).toBeInTheDocument());
+    expect(timeline.getByText('Chain verified')).toBeInTheDocument();
+    expect(timeline.getByText('Signed by this Studio device')).toBeInTheDocument();
+    expect(timeline.getByText('Locally sound (unverified claim)')).toBeInTheDocument();
+
+    // The general activity feed also carries a distinctly labeled checkpoint entry.
+    expect(screen.getByText(/Evidence checkpoint #0/)).toBeInTheDocument();
+  });
+
+  it('represents an invalid/unverifiable checkpoint state without crashing the app', async () => {
+    const backend = await setUpProjectWithSessionAndAsset();
+    backend.setVerifyOverride('*', {
+      checkpointId: 'checkpoint-invalid',
+      signature: { status: 'invalid', verification: { valid: false, reason: 'signature_mismatch' } },
+      structure: { valid: false, checkpointChain: { valid: false, errors: ['tampering detected'] }, errors: ['tampering detected'] },
+      deviceTrust: { deviceFound: true, currentlyTrusted: true },
+      claimStatus: 'signature_invalid',
+      reasons: ['signature_mismatch', 'checkpoint_chain_invalid'],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /create evidence checkpoint/i }));
+
+    const timelineCard = await waitFor(() => screen.getByText('Evidence checkpoints').closest('.card') as HTMLElement);
+    const timeline = within(timelineCard);
+    // Both the signature-status chip and the claim-status rollup chip
+    // legitimately read "Signature invalid" for this scenario (signature
+    // invalid IS the rollup's highest-priority reason) — assert at least
+    // one is present rather than requiring exactly one.
+    await waitFor(() => expect(timeline.getAllByText('Signature invalid').length).toBeGreaterThan(0));
+    expect(timeline.getByText('Chain invalid')).toBeInTheDocument();
+
+    // The rest of the app is still fully usable — no crash, no error boundary.
+    expect(screen.getByRole('heading', { name: 'Evidence Project' })).toBeInTheDocument();
+  });
+
+  it('never labels a checkpoint "verified" — only signature/chain/device/claim-status vocabulary', async () => {
+    await setUpProjectWithSessionAndAsset();
+    fireEvent.click(screen.getByRole('button', { name: /create evidence checkpoint/i }));
+    await waitFor(() => expect(screen.getByText(/Checkpoint #0/)).toBeInTheDocument());
+
+    const timelineCard = screen.getByText('Evidence checkpoints').closest('.card') as HTMLElement;
+    const timeline = within(timelineCard);
+    await waitFor(() => expect(timeline.getByText('Signature valid')).toBeInTheDocument());
+    expect(timeline.queryByText('Verified')).not.toBeInTheDocument();
+    expect(timeline.queryByText(/^verified$/i)).not.toBeInTheDocument();
+  });
+
+  it('ending a session automatically cuts a session_end checkpoint that then appears in the timeline', async () => {
+    await setUpProjectWithSessionAndAsset();
+    fireEvent.click(screen.getByRole('button', { name: /end session/i }));
+
+    await waitFor(() => expect(screen.getByText(/Checkpoint #0 — Session end/)).toBeInTheDocument());
   });
 });

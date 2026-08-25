@@ -13,6 +13,7 @@ import type { StudioSession } from '../../../../src/domain/studioSession.js';
 import type { ProvenanceEvent } from '../../../../src/domain/provenanceEvent.js';
 import type { ProjectAsset } from '../../../../src/domain/projectAsset.js';
 import type { ContributorReference } from '../../../../src/domain/contributorReference.js';
+import type { ProvenanceCheckpoint } from '../../../../src/domain/provenanceCheckpoint.js';
 import { humanize, type ActivityEntry } from '../lib/viewModels.js';
 import type { ProjectSnapshot } from './studioClient.js';
 
@@ -56,12 +57,30 @@ function assetEntry(asset: ProjectAsset): ActivityEntry {
   };
 }
 
-export function buildLiveActivityFeed(snapshot: ProjectSnapshot): ActivityEntry[] {
+function checkpointEntry(checkpoint: ProvenanceCheckpoint): ActivityEntry {
+  return {
+    kind: 'checkpoint',
+    id: checkpoint.id,
+    at: checkpoint.createdAt,
+    title: `Evidence checkpoint #${checkpoint.sequence} — ${humanize(checkpoint.triggerType)}`,
+    meta: checkpoint.actorProfileId,
+  };
+}
+
+/**
+ * `checkpoints` is a separate parameter (not part of `ProjectSnapshot`)
+ * because checkpoints are Capture Studio V2's own read path
+ * (`studioClient.listCheckpoints`), not part of V1's project snapshot
+ * shape — keeping it a plain optional parameter here avoids widening
+ * `ProjectSnapshot` for a concern that already has its own endpoint.
+ */
+export function buildLiveActivityFeed(snapshot: ProjectSnapshot, checkpoints: readonly ProvenanceCheckpoint[] = []): ActivityEntry[] {
   const entries: ActivityEntry[] = [
     ...snapshot.sessions.map(sessionEntry),
     ...snapshot.events.map(eventEntry),
     ...snapshot.contributorClaims.map(contributorClaimEntry),
     ...snapshot.assets.map(assetEntry),
+    ...checkpoints.map(checkpointEntry),
   ];
   return entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : 1));
 }

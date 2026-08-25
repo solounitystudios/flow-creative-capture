@@ -4,7 +4,7 @@ import {
   createProvenanceCheckpoint,
   type ProvenanceCheckpoint,
 } from '../domain/provenanceCheckpoint.js';
-import type { CheckpointId, ProfileId, ProjectId, SessionId, WorkReferenceId } from '../domain/ids.js';
+import type { CheckpointId, DeviceId, ProfileId, ProjectId, SessionId, WorkReferenceId } from '../domain/ids.js';
 import type { CheckpointTriggerType } from '../domain/enums.js';
 import { buildCheckpointManifest, hashCheckpointManifest, type CheckpointManifestInput } from './manifest.js';
 
@@ -38,6 +38,7 @@ export interface CreateCheckpointOptions {
   workReference?: WorkReferenceId;
   sessionId: SessionId;
   actorProfileId: ProfileId;
+  deviceId: DeviceId;
   sequence: number;
   previousCheckpointHash?: string;
   manifest: CheckpointManifestInput;
@@ -45,7 +46,13 @@ export interface CreateCheckpointOptions {
   createdAt: string;
 }
 
-/** Builds a manifest, hashes it, derives the checkpoint hash, and produces a validated checkpoint record. */
+/**
+ * Builds a manifest, hashes it, derives the checkpoint hash, and produces
+ * a validated, UNSIGNED checkpoint record — `deviceId` is carried onto the
+ * record (see `ProvenanceCheckpoint`'s docstring), but signing is a
+ * separate, explicit step (`signProvenanceCheckpoint`,
+ * `src/device/checkpointSigning.ts`), never performed implicitly here.
+ */
 export function createCheckpointFromManifest(options: CreateCheckpointOptions): ProvenanceCheckpoint {
   const manifest = buildCheckpointManifest({
     projectId: options.projectId,
@@ -68,6 +75,7 @@ export function createCheckpointFromManifest(options: CreateCheckpointOptions): 
     ...(options.workReference !== undefined ? { workReference: options.workReference } : {}),
     sessionId: options.sessionId,
     actorProfileId: options.actorProfileId,
+    deviceId: options.deviceId,
     sequence: options.sequence,
     ...(options.previousCheckpointHash !== undefined ? { previousCheckpointHash: options.previousCheckpointHash } : {}),
     manifestHash,

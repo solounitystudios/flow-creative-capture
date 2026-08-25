@@ -233,3 +233,124 @@ describe('Studio HTTP service — end to end', () => {
     expect(source).not.toMatch(/\.listen\([^)]*'0\.0\.0\.0'/);
   });
 });
+
+describe('Studio HTTP service — checkpoints (Capture Studio V2)', () => {
+  async function ingestAsset(projectId: string, sessionId: string, filename = 'take.wav') {
+    const res = await fetch(`${baseUrl}/projects/${projectId}/sessions/${sessionId}/assets?originalFilename=${filename}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: new TextEncoder().encode(`bytes for ${filename}`),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()) as { id: string };
+  }
+
+  async function createCheckpoint(projectId: string, sessionId: string, body: Record<string, unknown> = { actorProfileId: 'profile-1' }) {
+    return fetch(`${baseUrl}/projects/${projectId}/sessions/${sessionId}/checkpoints`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('creates a signed checkpoint end to end and fetches it back by id', async () => {
+    const project = await createProject();
+    const session = await startSession(project.id);
+    await ingestAsset(project.id, session.id);
+
+    const res = await createCheckpoint(project.id, session.id);
+    expect(res.status).toBe(201);
+    const checkpoint = (await res.json()) as { id: string; sequence: number; signature: string; projectId: string };
+    expect(checkpoint.sequence).toBe(0);
+    expect(checkpoint.projectId).toBe(project.id);
+    expect(typeof checkpoint.signature).toBe('string');
+
+    const fetched = await fetch(`${baseUrl}/projects/${project.id}/checkpoints/${checkpoint.id}`);
+    expect(fetched.status).toBe(200);
+    expect(await fetched.json()).toEqual(checkpoint);
+  });
+
+  it('lists a project\'s checkpoints in sequence order', async () => {
+    const project = await createProject();
+    const session = await startSession(project.id);
+    const c0 = await (await createCheckpoint(project.id, session.id)).json() as { id: string };
+    await ingestAsset(project.id, session.id, 'second.wav');
+    const c1 = await (await createCheckpoint(project.id, session.id)).json() as { id: string };
+
+    const listRes = await fetch(`${baseUrl}/projects/${project.id}/checkpoints`);
+    expect(listRes.status).toBe(200);
+    const list = (await listRes.json()) as { id: string; sequence: number }[];
+    expect(list.map((c) => c.id)).toEqual([c0.id, c1.id]);
+  });
+
+  it('verifies a checkpoint through the HTTP verify endpoint and reports it locally sound', async () => {
+    const project = await createProject();
+    const session = await startSession(project.id);
+    const checkpoint = (await (await createCheckpoint(project.id, session.id)).json()) as { id: string };
+
+    const verifyRes = await fetch(`${baseUrl}/projects/${project.id}/checkpoints/${checkpoint.id}/verify`, { method: 'POST' });
+    expect(verifyRes.status).toBe(200);
+    const evaluation = (await verifyRes.json()) as { claimStatus: string; signature: { status: string } };
+    expect(evaluation.claimStatus).toBe('locally_sound_unverified_claim');
+    expect(evaluation.signature.status).toBe('valid');
+  });
+
+  it('ends a session, automatically cutting a session_end checkpoint when there is new evidence', async () => {
+    const project = await createProject();
+    const session = await startSession(project.id);
+    await ingestAsset(project.id, session.id);
+
+    const endRes = await fetch(`${baseUrl}/projects/${project.id}/sessions/${session.id}/end`, { method: 'POST' });
+    expect(endRes.status).toBe(200);
+    const ended = (await endRes.json()) as { status: string };
+    expect(ended.status).toBe('ended');
+
+    const listRes = await fetch(`${baseUrl}/projects/${project.id}/checkpoints`);
+    const list = (await listRes.json()) as { triggerType: string }[];
+    expect(list).toHaveLength(1);
+    expect(list[0]?.triggerType).toBe('session_end');
+  });
+
+  it('returns a clean 400 (not a 500, not a crash) for an unrecognized triggerType, and the server survives', async () => {
+    const project = await createProject();
+    const session = await startSession(project.id);
+
+    const res = await createCheckpoint(project.id, session.id, { actorProfileId: 'profile-1', triggerType: 'bogus' });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(typeof body.error).toBe('string');
+    expect(body.error).not.toMatch(/at\s+\S+\.(ts|js):\d+/);
+
+    const health = await fetch(`${baseUrl}/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it('returns 404 for an unknown checkpoint id, and for verify against an unknown checkpoint', async () => {
+    const project = await createProject();
+    const getRes = await fetch(`${baseUrl}/projects/${project.id}/checkpoints/does-not-exist`);
+    expect(getRes.status).toBe(404);
+
+    const verifyRes = await fetch(`${baseUrl}/projects/${project.id}/checkpoints/does-not-exist/verify`, { method: 'POST' });
+    expect(verifyRes.status).toBe(404);
+  });
+
+  it('never leaks private key material in a checkpoint response, a checkpoint list, or a verify response', async () => {
+    const project = await createProject();
+    const session = await startSession(project.id);
+    await ingestAsset(project.id, session.id);
+    const checkpoint = (await (await createCheckpoint(project.id, session.id)).json()) as { id: string };
+
+    const listText = await (await fetch(`${baseUrl}/projects/${project.id}/checkpoints`)).text();
+    const getText = await (await fetch(`${baseUrl}/projects/${project.id}/checkpoints/${checkpoint.id}`)).text();
+    const verifyText = await (
+      await fetch(`${baseUrl}/projects/${project.id}/checkpoints/${checkpoint.id}/verify`, { method: 'POST' })
+    ).text();
+
+    for (const text of [listText, getText, verifyText]) {
+      expect(text).not.toMatch(/privateKey/i);
+      expect(text).not.toMatch(/pkcs8/i);
+      expect(text).not.toMatch(/publicKeySpkiDer/i);
+      expect(text).not.toMatch(/deviceKeyFingerprint/i);
+    }
+  });
+});

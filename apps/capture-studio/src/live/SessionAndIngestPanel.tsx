@@ -14,6 +14,8 @@ export function SessionAndIngestPanel({
   ingesting,
   selectedAssetId,
   onSelectAsset,
+  onEndSession,
+  endingSession,
 }: {
   readonly sessions: readonly StudioSession[];
   readonly assets: readonly ProjectAsset[];
@@ -24,6 +26,8 @@ export function SessionAndIngestPanel({
   readonly ingesting: boolean;
   readonly selectedAssetId: string | undefined;
   readonly onSelectAsset: (assetId: string) => void;
+  readonly onEndSession: (sessionId: string) => void;
+  readonly endingSession: boolean;
 }) {
   const [activeSessionId, setActiveSessionId] = useState<string | undefined>(sessions[sessions.length - 1]?.id);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -41,8 +45,20 @@ export function SessionAndIngestPanel({
             {sessions.map((session) => (
               <div className="detail-row" key={session.id}>
                 <span className="detail-row__label">{session.id}</span>
-                <span className="detail-row__value">
+                <span className="detail-row__value" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                   {session.actorProfileId} · started {formatDateTime(session.startedAt)}
+                  {session.status === 'active' ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost"
+                      onClick={() => onEndSession(session.id)}
+                      disabled={endingSession}
+                    >
+                      {endingSession ? 'Ending…' : 'End session'}
+                    </button>
+                  ) : (
+                    <span className="helper-text">{session.status}</span>
+                  )}
                 </span>
               </div>
             ))}

@@ -2,13 +2,15 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { asBatchId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
+import { asBatchId, asCheckpointId, asDeviceId, asEventId, asProfileId, asProjectId, asSessionId } from '../../src/domain/ids.js';
 import { createStudioSession } from '../../src/domain/studioSession.js';
 import { createProvenanceEvent } from '../../src/domain/provenanceEvent.js';
 import { createDeviceIdentity } from '../../src/device/identity.js';
 import { FileDeviceKeyStore } from '../../src/device/keyStore.js';
 import { signProvenanceBatch } from '../../src/device/batchSigning.js';
+import { signProvenanceCheckpoint } from '../../src/device/checkpointSigning.js';
 import { createBatchFromEvents } from '../../src/provenance/batch.js';
+import { createCheckpointFromManifest } from '../../src/provenance/checkpoint.js';
 import { LocalEvidenceStore } from '../../src/store/evidenceStore.js';
 
 /**
@@ -77,6 +79,20 @@ describe('Local Evidence Store — private key boundary', () => {
       }),
       identity,
     );
+    const checkpoint = signProvenanceCheckpoint(
+      createCheckpointFromManifest({
+        id: asCheckpointId('checkpoint-1'),
+        projectId: asProjectId('project-1'),
+        sessionId: asSessionId('session-1'),
+        actorProfileId: asProfileId('profile-1'),
+        deviceId,
+        sequence: 0,
+        manifest: { projectId: asProjectId('project-1'), assets: [], eventIds: [event.eventId] },
+        triggerType: 'manual',
+        createdAt: '2026-01-01T00:03:00.000Z',
+      }),
+      identity,
+    );
 
     const dbDir = makeTempDir('flow-keyboundary-db-');
     const dbPath = join(dbDir, 'evidence.db');
@@ -95,6 +111,7 @@ describe('Local Evidence Store — private key boundary', () => {
     );
     store.insertEvent(event, '2026-01-01T00:04:00.000Z');
     store.insertBatch(batch, '2026-01-01T00:04:00.000Z');
+    store.insertCheckpoint(checkpoint, '2026-01-01T00:04:00.000Z');
     store.close();
 
     const dbFileBytes = readFileSync(dbPath);
@@ -112,5 +129,8 @@ describe('Local Evidence Store — private key boundary', () => {
 
     // Also confirm the signature (base64 text) itself is present, as a second positive control.
     expect(dbFileBytes.includes(Buffer.from(batch.signature as string, 'utf8'))).toBe(true);
+    // And the checkpoint's own signature (Capture Studio V2 — Live Signed
+    // Evidence Checkpoints), as a third positive control.
+    expect(dbFileBytes.includes(Buffer.from(checkpoint.signature as string, 'utf8'))).toBe(true);
   });
 });
